@@ -111,3 +111,11 @@ yarn-error.log*
 strategy/mlruns/
 strategy/Users/
 strategy/*.png
+
+ali_fc/strategy/mlruns/
+ali_fc/strategy/Users/
+ali_fc/strategy/*.png
+ali_fc/strategy/*.csv
+ali_fc/qlib/docs/
+ali_fc/qlib/scripts/
+ali_fc/qlib/tests/
