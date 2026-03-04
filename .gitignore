@@ -1,0 +1,114 @@
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# ============================================================
+# Jupyter Notebooks
+# ============================================================
+.ipynb_checkpoints/
+*.ipynb
+
+# ============================================================
+# IDE / Editor
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# Project: Sensitive Credentials
+# ============================================================
+# Never commit notify credentials / API keys
+config/notify.yaml
+# Use notify.yaml.example as template instead
+
+# If user has a local override config
+config/local*.yaml
+config/secret*.yaml
+*.env
+.env.*
+
+# ============================================================
+# Project: Generated / Cache
+# ============================================================
+# Sector classification cache (auto-refreshed from akshare)
+cache/
+
+# Model artifacts (can be large, stored in MLflow or elsewhere)
+models_saved/
+*.pkl
+*.joblib
+*.pt
+*.pth
+
+# Signal output files
+signals/*.txt
+signals/*.json
+signals/*.csv
+
+# Backtest results
+backtest_results/
+
+# AI optimization output
+optimization_results/
+
+# Factor mining results
+cache/mined_factors.json
+
+# ============================================================
+# Logs
+# ============================================================
+logs/
+*.log
+
+# ============================================================
+# MLflow / Qlib experiment tracking
+# ============================================================
+mlruns/
+mlartifacts/
+qlib_workflow/
+
+# ============================================================
+# Data files (qlib data is managed separately)
+# ============================================================
+data/raw/
+data/processed/
+*.h5
+*.hdf5
+*.parquet
+*.feather
+*.arrow
+
+# ============================================================
+# OS / Misc
+# ============================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+desktop.ini

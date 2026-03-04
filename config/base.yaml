@@ -1,0 +1,36 @@
+# ============================================================
+# Base Configuration - quant_ex
+# 修改这里来配置你的数据路径、市场和实验设置
+# ============================================================
+
+qlib:
+  provider_uri: "/Users/weidian/code/algorithms/investment_data/qlib_data/qlib_bin"
+  region: "cn"
+
+market:
+  name: "csi300"           # 股票池: csi300 | csi500 | all
+  benchmark: "SH000300"    # 基准指数
+
+training:
+  fit_start:   "2015-01-01"
+  fit_end:     "2021-12-31"
+  valid_start: "2022-01-01"
+  valid_end:   "2023-12-31"
+  test_start:  "2024-01-01"
+
+experiment:
+  name: "tutorial_exp"
+  uri: "./mlruns"
+  # 每次训练后更新这个 ID，run_daily 和 run_backtest 会用它加载模型
+  latest_recorder_id: ""   # e.g. "3a339927f5f946f38a9b6bfbaeb8d463"
+
+data_cache:
+  dir: "./cache"
+  sector_ttl_days: 7        # 板块数据缓存有效天数
+
+paths:
+  model_dir: "./models"
+  signal_dir: "./signals"
+  log_dir: "./logs"
+  backtest_results_dir: "./backtest_results"
+  optimization_dir: "./optimization_results"

@@ -1,0 +1,24 @@
+# ============================================================
+# notify.yaml — 推送通知配置模板
+# 使用方式：cp config/notify.yaml.example config/notify.yaml
+#            然后填入凭证并将 enabled 改为 true
+# 注意：config/notify.yaml 已被 .gitignore 排除，不会提交到仓库
+# ============================================================
+
+bark:
+  enabled: false
+  server_url: "https://api.day.app"
+  device_key: ""          # 从 Bark App 复制设备 Key
+
+pushplus:
+  enabled: false
+  token: ""               # 登录 http://www.pushplus.plus/ 获取
+
+dingtalk:
+  enabled: false
+  webhook_url: ""         # 钉钉群机器人 Webhook URL
+  secret: ""              # 可选：安全设置中的签名密钥
+
+serverchan:
+  enabled: false
+  send_key: ""            # 注册 https://sct.ftqq.com/ 获取 SendKey

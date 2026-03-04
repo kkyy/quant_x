@@ -1,0 +1,31 @@
+# ============================================================
+# Model Configuration
+# ============================================================
+
+model:
+  # qlib handler 配置（决定使用哪些基础因子）
+  handler:
+    class: "Alpha158"
+    module_path: "qlib.contrib.data.handler"
+
+  lightgbm:
+    n_estimators: 1000
+    learning_rate: 0.05
+    max_depth: 8
+    num_leaves: 64
+    min_child_samples: 50
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 0.1
+    early_stopping_rounds: 50
+    verbose: -1
+    n_jobs: -1
+
+  # 是否启用额外特征
+  features:
+    use_sector_factors: true
+    sector_momentum_windows: [5, 10, 20, 60]    # 板块动量回望窗口
+    sector_reversal_windows: [5, 20]            # 板块反转回望窗口
+    use_mined_factors: false                    # 是否加载自动挖掘的因子
+    mined_factors_path: "./cache/mined_factors.json"
