@@ -3,11 +3,17 @@
 # ============================================================
 
 model:
-  # qlib handler 配置（决定使用哪些基础因子）
+  # ── Active model ────────────────────────────────────────────
+  # Model registry key. Available: lgbm | xgb | ridge | lasso
+  # Override from CLI: python run_train.py --model xgb
+  type: "lgbm"
+
+  # ── qlib handler ─────────────────────────────────────────────
   handler:
     class: "Alpha158"
     module_path: "qlib.contrib.data.handler"
 
+  # ── LightGBM hyper-parameters ────────────────────────────────
   lightgbm:
     n_estimators: 1000
     learning_rate: 0.05
@@ -22,10 +28,60 @@ model:
     verbose: -1
     n_jobs: -1
 
-  # 是否启用额外特征
+  # ── XGBoost hyper-parameters ─────────────────────────────────
+  xgboost:
+    n_estimators: 1000
+    learning_rate: 0.05
+    max_depth: 6
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    min_child_weight: 30
+    tree_method: "hist"
+    verbosity: 0
+    n_jobs: -1
+    early_stopping_rounds: 50
+
+  # ── Linear model hyper-parameters ────────────────────────────
+  linear:
+    alpha: 1.0     # used for both ridge and lasso
+
+  # ── Factor pipeline ──────────────────────────────────────────
+  # Define which extra factor providers to activate.
+  # Each entry must have a 'name' matching a FactorRegistry key.
+  # Remaining keys are passed as __init__ kwargs.
+  #
+  # Available built-ins:
+  #   sector   → SectorFactorEngine  (needs sector_map from SectorDataProvider)
+  #   technical→ TechnicalFactorEngine
+  #   mined    → MinedFactorLoader   (needs pre-mined cache file)
+  #
+  # Leave the list empty to use no extra factors.
   features:
-    use_sector_factors: true
-    sector_momentum_windows: [5, 10, 20, 60]    # 板块动量回望窗口
-    sector_reversal_windows: [5, 20]            # 板块反转回望窗口
-    use_mined_factors: false                    # 是否加载自动挖掘的因子
+    factors:
+      - name: "technical"
+        ma_pairs: [[5, 20], [10, 60]]
+        rsi_windows: [14, 20]
+        bb_windows: [20]
+        atr_windows: [14]
+        obv_windows: [10, 20]
+        vwap_windows: [5, 10, 20]
+
+      # Uncomment to enable sector rotation factors
+      # (requires SectorDataProvider / --with-sector flag)
+      # - name: "sector"
+      #   momentum_windows: [5, 10, 20, 60]
+      #   reversal_windows: [5, 20]
+
+      # Uncomment to include previously mined alpha factors
+      # - name: "mined"
+      #   path: "./cache/mined_factors.json"
+      #   top_n: 20
+
+    # Legacy flags (still supported, but 'factors' list takes priority)
+    use_sector_factors: false
+    sector_momentum_windows: [5, 10, 20, 60]
+    sector_reversal_windows: [5, 20]
+    use_mined_factors: false
     mined_factors_path: "./cache/mined_factors.json"

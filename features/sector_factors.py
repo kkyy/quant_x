@@ -10,35 +10,56 @@ A股市场有明显的板块轮动效应，这些因子从个股所属板块的�
 4. sector_rev_{w}d       板块反转（逆向）
 5. sector_vol_{w}d       板块波动率
 6. sector_id             板块数字编号（供 LightGBM categorical 使用）
+
+Registered name: "sector"
 """
 from __future__ import annotations
+
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from .base import BaseFactor, FactorRegistry
+
 logger = logging.getLogger(__name__)
 
 
-class SectorFactorEngine:
+@FactorRegistry.register("sector")
+class SectorFactorEngine(BaseFactor):
     """
     Compute sector-based features from price data.
 
-    Input:  price_df  —  DataFrame with (instrument, datetime) MultiIndex
-                         must contain 'real_close' column
-    Output: factor_df —  same MultiIndex, sector-factor columns
+    Input:  price_df  — DataFrame with (instrument, datetime) MultiIndex
+                        must contain 'real_close' (or '$close') column
+    Output: factor_df — same MultiIndex, sector-factor columns
+
+    Parameters
+    ----------
+    sector_map        : dict mapping instrument → sector name
+    momentum_windows  : look-back windows for momentum / relative-strength
+    reversal_windows  : look-back windows for reversal factors
     """
 
     def __init__(
         self,
-        sector_map: Dict[str, str],
-        momentum_windows: List[int] = None,
-        reversal_windows: List[int] = None,
+        sector_map: Optional[Dict[str, str]] = None,
+        momentum_windows: Optional[List[int]] = None,
+        reversal_windows: Optional[List[int]] = None,
     ):
-        self.sector_map = sector_map
+        self.sector_map = sector_map or {}
         self.mom_windows = momentum_windows or [5, 10, 20, 60]
         self.rev_windows = reversal_windows or [5, 20]
+
+    # ── BaseFactor interface ───────────────────────────────────────────────────
+
+    def compute(self, price_data: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Return sector factor DataFrame (instrument, datetime) MultiIndex."""
+        if not self.sector_map:
+            logger.warning("SectorFactorEngine: sector_map is empty, skipping.")
+            return None
+        return self.compute_all(price_data)
 
     # ── public ────────────────────────────────────────────────────────────────
 
@@ -79,7 +100,6 @@ class SectorFactorEngine:
 
         # Categorical sector id
         sector_id = self._sector_id(instruments, sector_s)
-        # broadcast across dates
         id_df = pd.DataFrame(
             {inst: sector_id[inst] for inst in instruments},
             index=close.index,
@@ -130,10 +150,6 @@ class SectorFactorEngine:
         sector_s: pd.Series,
         agg: str = "mean",
     ) -> pd.DataFrame:
-        """
-        For each sector, compute aggregate of `metric` across member stocks,
-        then broadcast back to each member stock column.
-        """
         sectors = sector_s.unique()
         sector_agg: Dict[str, pd.Series] = {}
 

@@ -11,8 +11,15 @@ Usage:
     miner = FactorMiner(price_data, label, top_n=20)
     results = miner.mine()
     miner.save_factors(results)
+
+    # Later, load mined factors as a FactorPipeline-compatible provider:
+    loader = MinedFactorLoader(path="./cache/mined_factors.json")
+    factor_df = loader.compute(price_data)
+
+Registered factor name: "mined"
 """
 from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass, field
@@ -22,6 +29,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+from .base import BaseFactor, FactorRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +102,8 @@ TEMPLATES: List[Tuple[str, str, Dict]] = [
 ]
 
 
+# ── Factor Miner ──────────────────────────────────────────────────────────────
+
 class FactorMiner:
     """
     Template-based alpha factor miner.
@@ -136,7 +147,8 @@ class FactorMiner:
 
         for name_tpl, expr_tpl, param_space in TEMPLATES:
             keys = list(param_space.keys())
-            vals = [param_space[k] if isinstance(param_space[k], list) else [param_space[k]] for k in keys]
+            vals = [param_space[k] if isinstance(param_space[k], list) else [param_space[k]]
+                    for k in keys]
 
             for combo in product(*vals):
                 params = dict(zip(keys, combo))
@@ -156,7 +168,9 @@ class FactorMiner:
                     progress_cb(count, total, name, ic, icir)
 
                 if abs(ic) >= self.min_ic and abs(icir) >= self.min_icir:
-                    results.append(FactorResult(name=name, expression=expr, ic=ic, icir=icir, values=fv))
+                    results.append(
+                        FactorResult(name=name, expression=expr, ic=ic, icir=icir, values=fv)
+                    )
                     logger.info(f"  ✅ {name} | IC={ic:.4f} ICIR={icir:.4f}")
 
         results.sort(key=lambda r: abs(r.icir), reverse=True)
@@ -164,9 +178,15 @@ class FactorMiner:
         logger.info(f"Mining done. Valid={len(results)}, kept={len(kept)}")
         return kept
 
-    def save_factors(self, results: List[FactorResult], path: str = "./cache/mined_factors.json"):
-        data = [{"name": r.name, "expression": r.expression, "ic": r.ic, "icir": r.icir}
-                for r in results]
+    def save_factors(
+        self,
+        results: List[FactorResult],
+        path: str = "./cache/mined_factors.json",
+    ):
+        data = [
+            {"name": r.name, "expression": r.expression, "ic": r.ic, "icir": r.icir}
+            for r in results
+        ]
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -220,3 +240,67 @@ class FactorMiner:
         mean_ic = ic_s.mean()
         icir = mean_ic / (ic_s.std() + 1e-8)
         return float(mean_ic), float(icir)
+
+
+# ── MinedFactorLoader ─────────────────────────────────────────────────────────
+
+@FactorRegistry.register("mined")
+class MinedFactorLoader(BaseFactor):
+    """
+    Load previously mined factors from a JSON file and re-evaluate
+    their qlib expressions against the given price data.
+
+    Registered name: "mined"
+
+    Parameters
+    ----------
+    path    : path to the JSON file produced by FactorMiner.save_factors()
+    top_n   : maximum number of factors to load (sorted by |icir|)
+    """
+
+    def __init__(
+        self,
+        path: str = "./cache/mined_factors.json",
+        top_n: Optional[int] = None,
+    ):
+        self.path = path
+        self.top_n = top_n
+
+    def compute(self, price_data: pd.DataFrame) -> Optional[pd.DataFrame]:
+        factors = FactorMiner.load_factors(self.path)
+        if not factors:
+            logger.warning(f"MinedFactorLoader: no factors found at '{self.path}'")
+            return None
+
+        # Sort by |icir| and limit
+        factors = sorted(factors, key=lambda x: abs(x.get("icir", 0)), reverse=True)
+        if self.top_n is not None:
+            factors = factors[: self.top_n]
+
+        datetimes   = price_data.index.get_level_values("datetime")
+        instruments = price_data.index.get_level_values("instrument").unique().tolist()
+        start       = str(datetimes.min())[:10]
+        end         = str(datetimes.max())[:10]
+
+        parts: List[pd.Series] = []
+        for f in factors:
+            try:
+                from qlib.data import D
+                df = D.features(
+                    instruments, [f["expression"]],
+                    start_time=start,
+                    end_time=end,
+                )
+                s = df.iloc[:, 0]
+                s.index.names = ["instrument", "datetime"]
+                parts.append(s.rename(f["name"]))
+                logger.debug(f"MinedFactorLoader: loaded '{f['name']}'")
+            except Exception as exc:
+                logger.warning(f"MinedFactorLoader: could not compute '{f['name']}': {exc}")
+
+        if not parts:
+            return None
+
+        result = pd.concat(parts, axis=1)
+        result.index.names = ["instrument", "datetime"]
+        return result.sort_index()
