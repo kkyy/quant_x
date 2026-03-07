@@ -12,6 +12,7 @@
 - [配置说明](#配置说明)
 - [入口脚本](#入口脚本)
 - [模块说明](#模块说明)
+- [东方财富数据爬取](#东方财富数据爬取)
 - [通知渠道](#通知渠道)
 - [AI 优化器](#ai-优化器)
 - [依赖安装](#依赖安装)
@@ -32,6 +33,7 @@
 - **AI 自动优化**：基于 Claude API 迭代分析回测结果，自动缩小搜索空间
 - **每日信号**：一键生成目标持仓 + 买卖信号，格式化报告
 - **多渠道推送**：Bark（iOS）、PushPlus（微信）、钉钉、Server 酱
+- **东方财富数据爬取**：独立 crawler 模块，支持板块/个股实时行情、资金流向、K线、成分股查询，内置 Python SDK 与完整板块代码枚举
 
 ---
 
@@ -293,6 +295,89 @@ python run_factor_mining.py --min-ic 0.03 --min-icir 0.4 --top-n 30
 
 ---
 
+## 东方财富数据爬取
+
+`crawler/` 是独立的东方财富接口封装模块，提供板块行情、个股行情、资金流向、K 线历史数据的完整 Python SDK，不依赖 qlib，可单独使用。
+
+> 接口完整说明见 [`crawler/eastmoney_api.md`](crawler/eastmoney_api.md)
+
+### 模块结构
+
+```
+crawler/
+├── eastmoney/
+│   ├── client.py       # EastMoneyClient（HTTP 基础客户端，自动重试 + 指数退避）
+│   ├── enums.py        # 枚举定义：SectorType / KlineInterval / AdjustType /
+│   │                   # QuoteField / FundField / SectorCode
+│   │                   # SectorCodeRegistry / SectorStocksRegistry / to_secid
+│   ├── sector.py       # SectorAPI（板块列表 / 成分股 / 资金流）
+│   ├── stock.py        # StockAPI（个股行情 / 个股资金流）
+│   └── kline.py        # KlineAPI（板块 & 个股 K 线，支持日/周/月/分钟）
+├── scripts/
+│   ├── fetch_sector_enums.py   # 拉取全量板块代码 → data/sector_codes.json
+│   └── fetch_sector_stocks.py  # 拉取全量成分股   → data/sector_stocks.json
+├── data/
+│   ├── sector_codes.json       # 行业(~497) + 概念(~468) + 地域(31) 板块代码表
+│   └── sector_stocks.json      # 各板块成分股列表（按需运行脚本生成）
+├── api_demo.py         # 完整调用示例（含离线演示）
+└── eastmoney_api.md    # 接口文档（URL / 参数 / 字段 / SDK 用法）
+```
+
+### 快速使用
+
+```python
+from eastmoney import SectorAPI, StockAPI, KlineAPI
+from eastmoney import SectorType, KlineInterval, AdjustType, SectorCode
+
+# 行业板块实时行情（按涨跌幅降序）
+df = SectorAPI().get_sector_list(SectorType.INDUSTRY)
+
+# 板块成分股（新能源车）
+df = SectorAPI().get_sector_stocks(SectorCode.NEW_ENERGY_VEHICLE.value)
+
+# 板块资金流向（概念板块，按主力净流入降序）
+df = SectorAPI().get_sector_fund_flow(SectorType.CONCEPT)
+
+# 个股实时行情（DeepSeek 板块成分股）
+df = StockAPI().get_stock_quote(bk_code=SectorCode.DEEPSEEK.value)
+
+# 个股资金流向（全市场）
+df = StockAPI().get_stock_fund_flow()
+
+# K 线（板块或个股，支持日/周/月/分钟周期）
+df = KlineAPI().get_kline("BK0475", interval=KlineInterval.DAY)
+df = KlineAPI().get_kline("600519", adjust=AdjustType.FORWARD, start_date="20230101")
+```
+
+### 板块代码查询
+
+```python
+from eastmoney import SectorCodeRegistry, SectorStocksRegistry
+
+# 按关键词搜索板块
+SectorCodeRegistry.find_by_name("芯片")
+# [{'code': 'BK0565', 'name': '芯片国产替代', 'type': 'concept'}, ...]
+
+# 查询股票所属全部板块（需先运行 fetch_sector_stocks.py）
+SectorStocksRegistry.find_sectors_by_stock("600519")
+
+# 生成股票→行业板块映射（用于因子构建）
+mapping = SectorStocksRegistry.stock_sector_map("industry")
+```
+
+### 数据维护脚本
+
+```bash
+# 1. 刷新板块代码枚举（约 1000 个板块）
+python crawler/scripts/fetch_sector_enums.py --proxy http://127.0.0.1:7890
+
+# 2. 拉取成分股（支持断点续传，每 50 个板块自动保存一次）
+python crawler/scripts/fetch_sector_stocks.py --proxy http://127.0.0.1:7890 --type industry
+python crawler/scripts/fetch_sector_stocks.py --proxy http://127.0.0.1:7890 --type concept --resume
+```
+
+---
+
 ## 通知渠道
 
 在 `config/notify.yaml` 中启用对应渠道并填入凭证：
@@ -380,6 +465,12 @@ quant_ex/
 │   ├── config.py          # 配置加载（YAML 合并）
 │   ├── logger.py          # 日志设置
 │   └── qlib_utils.py      # qlib 工具函数
+├── crawler/
+│   ├── eastmoney/         # 东方财富 SDK（client / enums / sector / stock / kline）
+│   ├── scripts/           # 数据维护脚本（fetch_sector_enums / fetch_sector_stocks）
+│   ├── data/              # 板块代码表 & 成分股列表（JSON）
+│   ├── api_demo.py        # 调用示例
+│   └── eastmoney_api.md   # 接口完整文档
 ├── run_train.py           # 入口：模型训练
 ├── run_daily.py           # 入口：每日信号
 ├── run_backtest.py        # 入口：回测 & 网格搜索
