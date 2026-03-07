@@ -20,6 +20,9 @@ class UniverseFilter:
     def __init__(self, strategy_config: dict):
         self.cfg = strategy_config.get("universe_filter", {})
 
+    def requires_price_data(self) -> bool:
+        return bool(self.cfg.get("min_price"))
+
     def filter(
         self,
         pred: pd.Series,
@@ -41,15 +44,20 @@ class UniverseFilter:
         # 股价下限
         min_price = self.cfg.get("min_price")
         if min_price and price_data is not None and "real_close" in price_data.columns:
-            latest = (
-                price_data["real_close"]
-                .reset_index()
-                .sort_values("datetime")
-                .groupby("instrument")["real_close"]
-                .last()
-            )
-            price_ok = instrs.map(lambda x: latest.get(x, float("inf")) >= min_price)
-            mask &= price_ok
+            price_series = price_data["real_close"].sort_index()
+            aligned_prices = price_series.reindex(pred.index)
+
+            if aligned_prices.isna().any():
+                latest = (
+                    price_series.reset_index()
+                    .sort_values("datetime")
+                    .groupby("instrument")["real_close"]
+                    .last()
+                )
+                fallback = pred.index.get_level_values("instrument").map(latest)
+                aligned_prices = aligned_prices.fillna(pd.Series(fallback, index=pred.index))
+
+            mask &= aligned_prices.ge(min_price).fillna(False)
 
         n_before, n_after = len(pred), int(mask.sum())
         logger.debug(f"Universe filter: {n_before} → {n_after} stocks")

@@ -12,6 +12,7 @@ Two execution paths:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
@@ -29,6 +30,13 @@ for _m in ("lgbm_model", "linear_model", "xgb_model"):
     _il.import_module(f".{_m}", package=__name__.rsplit(".", 1)[0])
 for _f in ("sector_factors", "technical_factors", "factor_mining"):
     _il.import_module(f"..features.{_f}", package=__name__.rsplit(".", 1)[0])
+
+
+def _sanitize_artifact_tag(tag: Optional[str]) -> Optional[str]:
+    if not tag:
+        return None
+    safe_tag = re.sub(r"[^0-9A-Za-z._-]+", "_", tag).strip("._-")
+    return safe_tag or None
 
 
 class ModelTrainer:
@@ -58,6 +66,7 @@ class ModelTrainer:
         price_data: Optional[pd.DataFrame] = None,
         factor_pipeline: Optional[FactorPipeline] = None,
         experiment_name: Optional[str] = None,
+        tag: Optional[str] = None,
         # legacy compat
         use_sector_factors: bool = False,
     ) -> Tuple:
@@ -113,7 +122,7 @@ class ModelTrainer:
                     f"{len(extra_factors)} rows"
                 )
 
-        return self._train_custom(dataset, model_name, extra_factors)
+        return self._train_custom(dataset, model_name, extra_factors, tag=tag)
 
     # ── private ───────────────────────────────────────────────────────────────
 
@@ -157,8 +166,11 @@ class ModelTrainer:
         dataset,
         model_name: str,
         extra_factors: Optional[pd.DataFrame],
+        tag: Optional[str] = None,
     ):
         """Instantiate and train any model from the registry."""
+        import json as _json
+
         model_cfg = self.config.get("model", {})
 
         # Build model-specific kwargs from config
@@ -168,9 +180,30 @@ class ModelTrainer:
         model = ModelRegistry.build(model_name, **kwargs)
         model.fit(dataset)
 
-        ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = self.model_dir / f"{model_name}_{ts}.pkl"
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_tag = _sanitize_artifact_tag(tag)
+        stem = f"{model_name}_{safe_tag}_{ts}" if safe_tag else f"{model_name}_{ts}"
+        path = self.model_dir / f"{stem}.pkl"
         model.save(str(path))
+
+        # Save sidecar metadata for experiment tracking
+        meta = {
+            "model": model_name,
+            "tag": tag,
+            "safe_tag": safe_tag,
+            "ts": ts,
+            "extra_factor_cols": list(extra_factors.columns) if extra_factors is not None else [],
+            "config_snapshot": {
+                "training": self.config.get("training", {}),
+                "market": self.config.get("market", {}),
+                "features": self.config.get("model", {}).get("features", {}),
+            },
+        }
+        (self.model_dir / f"{stem}_meta.json").write_text(
+            _json.dumps(meta, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info(f"Metadata saved → {stem}_meta.json")
         return model, dataset, None
 
     def _model_kwargs(

@@ -1,10 +1,11 @@
 """Data loading layer wrapping qlib."""
 from __future__ import annotations
-import pandas as pd
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+
 import logging
+from datetime import datetime
+from typing import Dict, List, Optional, Sequence, Tuple, Union
+
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class DataLoader:
 
     def load_price_data(
         self,
-        instruments: str = "csi300",
+        instruments: Union[str, Sequence[str]] = "csi300",
         start_time: str = "2015-01-01",
         end_time: Optional[str] = None,
         fields: Optional[List[str]] = None,
@@ -49,7 +50,17 @@ class DataLoader:
             ]
         end_time = end_time or datetime.now().strftime("%Y-%m-%d")
 
-        df = D.features(D.instruments(instruments), fields, start_time=start_time, end_time=end_time)
+        if isinstance(instruments, str):
+            instrument_expr = D.instruments(instruments)
+        else:
+            instrument_expr = list(instruments)
+
+        df = D.features(
+            instrument_expr,
+            fields,
+            start_time=start_time,
+            end_time=end_time,
+        )
         df.index.names = ["instrument", "datetime"]
         df["real_close"] = df["$close"] / df["$factor"]
         return df

@@ -61,9 +61,19 @@ class SignalGenerator:
         trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
 
         pred = model.predict(dataset, segment="test")
+        price_data = None
 
         if self.universe_filter is not None:
-            pred = self.universe_filter.filter(pred)
+            if self.universe_filter.requires_price_data():
+                start_time = pred.index.get_level_values("datetime").min().strftime("%Y-%m-%d")
+                price_data = self.data_loader.load_price_data(
+                    instruments=self.config.get("market", {}).get("name", "csi300"),
+                    start_time=start_time,
+                    end_time=trade_date,
+                )
+                pred = self.universe_filter.filter(pred, price_data=price_data)
+            else:
+                pred = self.universe_filter.filter(pred)
 
         latest_dt = pred.index.get_level_values("datetime").max()
         latest_pred = pred.xs(latest_dt, level="datetime")
@@ -72,7 +82,8 @@ class SignalGenerator:
         topk = strat_cfg.get("topk", 10)
         top_stocks = latest_pred.nlargest(topk)
 
-        prices = self._fetch_prices(list(top_stocks.index), trade_date)
+        all_insts = list(dict.fromkeys(list(top_stocks.index) + list((current_positions or {}).keys())))
+        prices = self._fetch_prices(all_insts, trade_date, price_data=price_data)
 
         sector_info: Dict[str, str] = {}
         if self.sector_provider is not None:
@@ -100,9 +111,9 @@ class SignalGenerator:
             "╠" + "═" * 50 + "╣",
             f"║  日期:   {data['date']}" + " " * (41 - len(data['date'])) + "║",
             f"║  数据截止: {data['latest_prediction_date']}" + " " * (39 - len(data['latest_prediction_date'])) + "║",
-            f"║  账户估值: ¥{data['account_value']:,.0f}",
+            f"║  账户估值: ¥{data['account_value']:,.0f}" + " " * max(0, 37 - len(f"{data['account_value']:,.0f}")) + "║",
             "╠" + "═" * 50 + "╣",
-            "║  目标持仓 (Top-K)",
+            "║  目标持仓 (Top-K)" + " " * 32 + "║",
             "╠" + "═" * 50 + "╣",
         ]
 
@@ -140,13 +151,40 @@ class SignalGenerator:
 
     # ── private ───────────────────────────────────────────────────────────────
 
-    def _fetch_prices(self, instruments: List[str], date: str) -> Dict[str, float]:
+    def _fetch_prices(
+        self,
+        instruments: List[str],
+        date: str,
+        price_data: Optional[pd.DataFrame] = None,
+    ) -> Dict[str, float]:
+        if not instruments:
+            return {}
+
         try:
-            from datetime import timedelta
+            if price_data is not None and "real_close" in price_data.columns:
+                latest = (
+                    price_data.loc[
+                        price_data.index.get_level_values("instrument").isin(instruments),
+                        "real_close",
+                    ]
+                    .reset_index()
+                    .sort_values("datetime")
+                    .groupby("instrument")["real_close"]
+                    .last()
+                )
+                prices = {i: float(latest.get(i, 0)) for i in instruments}
+                missing = [inst for inst, price in prices.items() if price <= 0]
+                if not missing:
+                    return prices
+            else:
+                prices = {}
+                missing = instruments
+
             start = (pd.Timestamp(date) - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
-            mkt = self.config.get("market", {}).get("name", "csi300")
             price_df = self.data_loader.load_price_data(
-                instruments=mkt, start_time=start, end_time=date
+                instruments=missing,
+                start_time=start,
+                end_time=date,
             )
             latest = (
                 price_df["real_close"]
@@ -155,7 +193,8 @@ class SignalGenerator:
                 .groupby("instrument")["real_close"]
                 .last()
             )
-            return {i: float(latest.get(i, 0)) for i in instruments}
+            prices.update({i: float(latest.get(i, 0)) for i in missing})
+            return prices
         except Exception as e:
             logger.warning(f"Price fetch failed: {e}")
             return {}

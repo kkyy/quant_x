@@ -39,8 +39,27 @@ def parse_ints(s: str) -> list:
     return [int(x.strip()) for x in s.split(",") if x.strip()]
 
 
+def _load_model(config: dict, model_path: str = None):
+    """Load model from .pkl path (custom) or MLflow recorder (qlib-native)."""
+    if model_path:
+        from quant_ex.models.base import BaseAlphaModel
+        logger.info(f"加载模型: {model_path}")
+        return BaseAlphaModel.load(model_path)
+
+    exp_cfg = config.get("experiment", {})
+    rid = exp_cfg.get("latest_recorder_id", "")
+    if not rid:
+        logger.error(
+            "未配置模型路径。请使用 --model-path 指定 .pkl 文件，\n"
+            "或在 config/base.yaml 中填写 experiment.latest_recorder_id"
+        )
+        sys.exit(1)
+    return load_recorder_model(exp_cfg.get("name", "tutorial_exp"), rid)
+
+
 def main(
     config_path: str = None,
+    model_path: str = None,
     topk_vals: list = None,
     n_drop_vals: list = None,
     hold_thresh_vals: list = None,
@@ -55,13 +74,7 @@ def main(
     logger.info("=== 批量回测 ===")
 
     # ── 加载模型 ──────────────────────────────────────────────────────────────
-    exp_cfg = config.get("experiment", {})
-    rid = exp_cfg.get("latest_recorder_id", "")
-    if not rid:
-        logger.error("未配置 experiment.latest_recorder_id，请先训练模型并填写")
-        sys.exit(1)
-
-    model = load_recorder_model(exp_cfg.get("name", "tutorial_exp"), rid)
+    model = _load_model(config, model_path)
 
     # ── 构建数据集 ────────────────────────────────────────────────────────────
     data_loader = DataLoader(config)
@@ -78,7 +91,15 @@ def main(
 
     # ── 生成预测 ──────────────────────────────────────────────────────────────
     pred = model.predict(dataset, segment="test")
-    pred = universe_filter.filter(pred)
+    if universe_filter.requires_price_data():
+        price_data = data_loader.load_price_data(
+            instruments=config.get("market", {}).get("name", "csi300"),
+            start_time=tcfg.get("test_start", "2024-01-01"),
+            end_time=end or today,
+        )
+        pred = universe_filter.filter(pred, price_data=price_data)
+    else:
+        pred = universe_filter.filter(pred)
 
     # ── 构建参数网格 ──────────────────────────────────────────────────────────
     param_grid = {
@@ -102,7 +123,6 @@ def main(
             initial_grid=param_grid,
             n_iterations=n_iters,
             save_dir=str(out_dir),
-            universe_filter=universe_filter,
         )
         print("\n=== 优化汇总 ===")
         for r in records:
@@ -113,7 +133,6 @@ def main(
             param_grid=param_grid,
             start_time=start,
             end_time=end,
-            universe_filter=universe_filter,
         )
 
         print("\n=== 网格搜索结果 ===")
@@ -140,6 +159,8 @@ def main(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="量化策略批量回测")
     parser.add_argument("--config",      type=str, default=None)
+    parser.add_argument("--model-path",  type=str, default=None,
+                        help="直接加载 .pkl 模型文件，例如 models/lgbm_baseline_20260308_143021.pkl")
     parser.add_argument("--topk",        type=str, default=None, help="e.g. 5,10,15")
     parser.add_argument("--n-drop",      type=str, default=None)
     parser.add_argument("--hold-thresh", type=str, default=None)
@@ -151,6 +172,7 @@ if __name__ == "__main__":
 
     main(
         config_path=args.config,
+        model_path=args.model_path,
         topk_vals=parse_ints(args.topk) if args.topk else None,
         n_drop_vals=parse_ints(args.n_drop) if args.n_drop else None,
         hold_thresh_vals=parse_ints(args.hold_thresh) if args.hold_thresh else None,

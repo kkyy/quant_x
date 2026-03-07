@@ -21,12 +21,20 @@ training:
 experiment:
   name: "tutorial_exp"
   uri: "./mlruns"
-  # 每次训练后更新这个 ID，run_daily 和 run_backtest 会用它加载模型
+
+  # ── 模型加载（两种方式二选一）────────────────────────────────
+  #
+  # 方式 1: qlib-native 训练（--qlib-native）后自动生成的 MLflow Recorder ID
+  #   训练后会打印: "→ Set experiment.latest_recorder_id = ..."
   latest_recorder_id: ""   # e.g. "3a339927f5f946f38a9b6bfbaeb8d463"
+  #
+  # 方式 2: 自定义模型（--model lgbm/xgb/ridge/lasso）保存的 .pkl 文件
+  #   通过 CLI 指定: python run_backtest.py --model-path models/lgbm_baseline_20260308_143021.pkl
+  #   通过 CLI 指定: python run_daily.py    --model-path models/lgbm_sector_full_20260308_143021.pkl
 
 data_cache:
   dir: "./cache"
-  sector_ttl_days: 7        # 板块数据缓存有效天数
+  sector_ttl_days: 7        # 板块数据缓存有效天数（akshare 获取的行业数据）
 
 paths:
   model_dir: "./models"

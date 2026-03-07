@@ -22,3 +22,25 @@ dingtalk:
 serverchan:
   enabled: false
   send_key: ""            # 注册 https://sct.ftqq.com/ 获取 SendKey
+
+# ── 微信公众号模板消息 ────────────────────────────────────
+# 前提: 需要已认证的微信服务号，并在公众平台开通模板消息功能
+# 步骤:
+#   1. 登录 https://mp.weixin.qq.com/ → 设置与开发 → 基本配置
+#      复制 AppID 和 AppSecret
+#   2. 功能 → 模板消息 → 选用/添加模板，复制模板 ID
+#      模板应包含字段: first / keyword1 / keyword2 / remark
+#      示例模板内容:
+#        {{first.DATA}}
+#        日期：{{keyword1.DATA}}
+#        摘要：{{keyword2.DATA}}
+#        {{remark.DATA}}
+#   3. 用户需关注公众号，获取其 OpenID（可在"用户管理"页查看）
+wechat_mp:
+  enabled: false
+  appid: ""               # 公众号 AppID（wx 开头）
+  appsecret: ""           # 公众号 AppSecret
+  template_id: ""         # 模板消息 ID
+  openids:                # 接收推送的用户 OpenID 列表
+    - ""
+  url: ""                 # 可选: 点击消息后跳转的链接

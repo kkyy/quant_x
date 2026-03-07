@@ -41,8 +41,28 @@ def parse_positions(s: str) -> dict:
     return result
 
 
+def _load_model(config: dict, model_path: str = None):
+    """Load model from .pkl path (custom) or MLflow recorder (qlib-native)."""
+    if model_path:
+        from quant_ex.models.base import BaseAlphaModel
+        logger.info(f"加载模型: {model_path}")
+        return BaseAlphaModel.load(model_path)
+
+    exp_cfg = config.get("experiment", {})
+    rid = exp_cfg.get("latest_recorder_id", "")
+    if not rid:
+        logger.error(
+            "未配置模型路径。请使用 --model-path 指定 .pkl 文件，\n"
+            "或在 config/base.yaml 中填写 experiment.latest_recorder_id"
+        )
+        sys.exit(1)
+    logger.info(f"加载模型: {exp_cfg.get('name')} / {rid}")
+    return load_recorder_model(exp_cfg.get("name", "tutorial_exp"), rid)
+
+
 def main(
     config_path: str = None,
+    model_path: str = None,
     dry_run: bool = False,
     account: float = None,
     current_positions: dict = None,
@@ -51,17 +71,6 @@ def main(
     today = datetime.now().strftime("%Y-%m-%d")
     logger.info(f"=== 每日选股信号 {today} ===")
 
-    # ── 检查 recorder id ─────────────────────────────────────────────────────
-    exp_cfg = config.get("experiment", {})
-    rid = exp_cfg.get("latest_recorder_id", "")
-    if not rid:
-        logger.error(
-            "未配置 experiment.latest_recorder_id。\n"
-            "请在 config/base.yaml 中填写最新模型的 Recorder ID，\n"
-            "训练后会打印: '→ Set experiment.latest_recorder_id = ...'"
-        )
-        sys.exit(1)
-
     # ── 初始化组件 ────────────────────────────────────────────────────────────
     data_loader = DataLoader(config)
     universe_filter = UniverseFilter(config.get("strategy", {}))
@@ -69,8 +78,7 @@ def main(
     pusher = NotificationPusher(config)
 
     # ── 加载模型 ──────────────────────────────────────────────────────────────
-    logger.info(f"加载模型: {exp_cfg.get('name')} / {rid}")
-    model = load_recorder_model(exp_cfg.get("name", "tutorial_exp"), rid)
+    model = _load_model(config, model_path)
 
     # ── 构建数据集 ────────────────────────────────────────────────────────────
     tcfg = config.get("training", {})
@@ -115,7 +123,9 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="每日量化选股信号生成")
-    parser.add_argument("--config", type=str, default=None)
+    parser.add_argument("--config",      type=str, default=None)
+    parser.add_argument("--model-path",  type=str, default=None,
+                        help="直接加载 .pkl 模型文件，例如 models/lgbm_sector_full_20260308_143021.pkl")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--account", type=float, default=None)
     parser.add_argument(
@@ -127,6 +137,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(
         config_path=args.config,
+        model_path=args.model_path,
         dry_run=args.dry_run,
         account=args.account,
         current_positions=parse_positions(args.positions),

@@ -48,18 +48,26 @@ model:
     alpha: 1.0     # used for both ridge and lasso
 
   # ── Factor pipeline ──────────────────────────────────────────
-  # Define which extra factor providers to activate.
-  # Each entry must have a 'name' matching a FactorRegistry key.
-  # Remaining keys are passed as __init__ kwargs.
+  # 定义哪些额外因子供应商参与训练特征构建。
+  # 每个 entry 的 name 必须对应 FactorRegistry 注册的 key。
+  # 其余字段作为该因子 __init__ 的 kwargs 传入。
   #
-  # Available built-ins:
-  #   sector   → SectorFactorEngine  (needs sector_map from SectorDataProvider)
-  #   technical→ TechnicalFactorEngine
-  #   mined    → MinedFactorLoader   (needs pre-mined cache file)
+  # 内置因子:
+  #   technical → TechnicalFactorEngine  (无需额外数据)
+  #   sector    → SectorFactorEngine     (需要 --with-sector 激活板块数据加载)
+  #   mined     → MinedFactorLoader      (需要预先运行 run_factor_mining.py)
   #
-  # Leave the list empty to use no extra factors.
+  # 注意: sector 因子会自动注入 sector_map（东方财富行业, 497个板块）
+  #       和 concept_map（东方财富概念, 468个板块），无需在此配置。
+  #       需要在训练时加 --with-sector 标志才会生效。
+  #
+  # 消融实验示例:
+  #   python run_train.py --model lgbm --tag baseline          # 仅技术因子
+  #   python run_train.py --model lgbm --tag sector_only \
+  #     --with-sector                                          # 技术+板块因子
   features:
     factors:
+      # 技术因子（始终启用）
       - name: "technical"
         ma_pairs: [[5, 20], [10, 60]]
         rsi_windows: [14, 20]
@@ -68,18 +76,27 @@ model:
         obv_windows: [10, 20]
         vwap_windows: [5, 10, 20]
 
-      # Uncomment to enable sector rotation factors
-      # (requires SectorDataProvider / --with-sector flag)
+      # 板块轮动因子 — 取消注释后配合 --with-sector 使用
+      # 生成的特征:
+      #   sector_mom_{5,10,20,60}d   行业动量
+      #   sector_rel_{5,10,20,60}d   行业相对强度（vs 全市场）
+      #   stock_vs_sector_{5,20}d    个股超额（vs 行业）
+      #   sector_rev_{5,20}d         行业反转
+      #   sector_vol_{10,20}d        行业波动率
+      #   sector_id                  行业编号（LightGBM categorical）
+      #   concept_mom_{5,10,20}d     概念动量
+      #   concept_rel_{5,10}d        概念相对强度
+      #   concept_id                 概念编号
       # - name: "sector"
       #   momentum_windows: [5, 10, 20, 60]
       #   reversal_windows: [5, 20]
 
-      # Uncomment to include previously mined alpha factors
+      # 挖掘因子 — 取消注释后需先运行 run_factor_mining.py
       # - name: "mined"
       #   path: "./cache/mined_factors.json"
       #   top_n: 20
 
-    # Legacy flags (still supported, but 'factors' list takes priority)
+    # ── Legacy flags（已被 factors 列表取代，仍向下兼容）────────
     use_sector_factors: false
     sector_momentum_windows: [5, 10, 20, 60]
     sector_reversal_windows: [5, 20]
