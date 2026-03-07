@@ -219,15 +219,20 @@ class ModelTrainer:
             shared = {}
             if self.sector_provider is not None:
                 shared["sector_map"] = self.sector_provider.get_map()
+                concept_map = self.sector_provider.get_concept_map()
+                if concept_map:
+                    shared["concept_map"] = concept_map
             return FactorPipeline.from_config(factor_list, **shared)
 
         # Legacy: use_sector_factors flag
         if use_sector_factors and self.sector_provider is not None:
             sector_map = self.sector_provider.get_map()
+            concept_map = self.sector_provider.get_concept_map()
             cfg = feat_cfg
             from ..features.sector_factors import SectorFactorEngine
             engine = SectorFactorEngine(
                 sector_map=sector_map,
+                concept_map=concept_map or None,
                 momentum_windows=cfg.get("sector_momentum_windows", [5, 10, 20, 60]),
                 reversal_windows=cfg.get("sector_reversal_windows", [5, 20]),
             )

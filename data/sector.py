@@ -1,12 +1,30 @@
-"""Sector (industry) data provider for A-shares using akshare + local cache."""
+"""Sector (industry) data provider for A-shares.
+
+Data source priority:
+1. akshare (实时)
+2. crawler/data/sector_stocks.json (本地离线，从 crawler 爬取）
+3. local cache (last successful fetch)
+"""
 from __future__ import annotations
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+# Path to the crawler data file (relative to this file: ../crawler/data/)
+_CRAWLER_STOCKS_FILE = Path(__file__).parent.parent / "crawler" / "data" / "sector_stocks.json"
+
+
+def _code_to_qlib(code: str) -> str:
+    """Convert 6-digit stock code to qlib instrument format (SH/SZ/BJ prefix)."""
+    if code.startswith("6"):
+        return f"SH{code}"
+    if code.startswith(("8", "4")):
+        return f"BJ{code}"
+    return f"SZ{code}"
 
 
 class SectorDataProvider:
@@ -72,12 +90,48 @@ class SectorDataProvider:
         )
         (self.cache_dir / "sector_ts.txt").write_text(datetime.now().isoformat())
 
+    def get_concept_map(self) -> Dict[str, str]:
+        """
+        Return {qlib_instrument: concept_name} from crawler's sector_stocks.json.
+
+        Each stock is mapped to its first concept sector (BK code order).
+        Returns empty dict if the data file does not exist.
+        """
+        if not _CRAWLER_STOCKS_FILE.exists():
+            return {}
+        try:
+            data = json.loads(_CRAWLER_STOCKS_FILE.read_text(encoding="utf-8"))
+            concept = data.get("concept", {})
+            stock_concept: Dict[str, str] = {}
+            for info in concept.values():
+                name = info["name"]
+                for stock in info["stocks"]:
+                    code = stock["code"]
+                    if code not in stock_concept:  # keep first (BK code order)
+                        stock_concept[code] = name
+            result = {_code_to_qlib(c): n for c, n in stock_concept.items()}
+            logger.debug(f"Concept map: {len(result)} stocks, {len(concept)} concepts")
+            return result
+        except Exception as exc:
+            logger.warning(f"concept map load failed: {exc}")
+            return {}
+
+    # ── internals ─────────────────────────────────────────────────────────────
+
     def _fetch(self) -> Optional[Dict[str, str]]:
+        """Fetch industry classification: akshare first, crawler registry fallback."""
+        result = self._fetch_akshare()
+        if result:
+            return result
+        logger.info("Falling back to crawler/data/sector_stocks.json …")
+        return self._fetch_from_registry()
+
+    def _fetch_akshare(self) -> Optional[Dict[str, str]]:
         """Fetch industry classification from akshare (东方财富)."""
         try:
             import akshare as ak
         except ImportError:
-            logger.warning("akshare not installed. Run: pip install akshare")
+            logger.warning("akshare not installed, using crawler registry fallback")
             return None
 
         try:
@@ -90,14 +144,7 @@ class SectorDataProvider:
                 try:
                     stocks = ak.stock_board_industry_cons_em(symbol=name)
                     for _, sr in stocks.iterrows():
-                        code = str(sr["代码"])
-                        if code.startswith("6"):
-                            qcode = f"SH{code}"
-                        elif code.startswith(("8", "4")):
-                            qcode = f"BJ{code}"
-                        else:
-                            qcode = f"SZ{code}"
-                        sector_map[qcode] = name
+                        sector_map[_code_to_qlib(str(sr["代码"]))] = name
                 except Exception as e:
                     logger.warning(f"  Skip sector '{name}': {e}")
 
@@ -110,4 +157,27 @@ class SectorDataProvider:
 
         except Exception as e:
             logger.error(f"akshare fetch failed: {e}")
+            return None
+
+    def _fetch_from_registry(self) -> Optional[Dict[str, str]]:
+        """Load industry sector map from crawler/data/sector_stocks.json (offline)."""
+        if not _CRAWLER_STOCKS_FILE.exists():
+            logger.warning(f"Crawler data not found: {_CRAWLER_STOCKS_FILE}")
+            return None
+        try:
+            data = json.loads(_CRAWLER_STOCKS_FILE.read_text(encoding="utf-8"))
+            industry = data.get("industry", {})
+            sector_map: Dict[str, str] = {}
+            for info in industry.values():
+                name = info["name"]
+                for stock in info["stocks"]:
+                    sector_map[_code_to_qlib(stock["code"])] = name
+            logger.info(
+                f"Loaded {len(sector_map)} stocks in {len(industry)} sectors "
+                "from crawler registry"
+            )
+            self._save_cache(sector_map)
+            return sector_map
+        except Exception as exc:
+            logger.warning(f"Registry load failed: {exc}")
             return None

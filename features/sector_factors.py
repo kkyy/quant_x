@@ -47,8 +47,10 @@ class SectorFactorEngine(BaseFactor):
         sector_map: Optional[Dict[str, str]] = None,
         momentum_windows: Optional[List[int]] = None,
         reversal_windows: Optional[List[int]] = None,
+        concept_map: Optional[Dict[str, str]] = None,
     ):
         self.sector_map = sector_map or {}
+        self.concept_map = concept_map or {}
         self.mom_windows = momentum_windows or [5, 10, 20, 60]
         self.rev_windows = reversal_windows or [5, 20]
 
@@ -56,8 +58,8 @@ class SectorFactorEngine(BaseFactor):
 
     def compute(self, price_data: pd.DataFrame) -> Optional[pd.DataFrame]:
         """Return sector factor DataFrame (instrument, datetime) MultiIndex."""
-        if not self.sector_map:
-            logger.warning("SectorFactorEngine: sector_map is empty, skipping.")
+        if not self.sector_map and not self.concept_map:
+            logger.warning("SectorFactorEngine: sector_map and concept_map are both empty, skipping.")
             return None
         return self.compute_all(price_data)
 
@@ -72,39 +74,58 @@ class SectorFactorEngine(BaseFactor):
         rets = close.pct_change()
 
         instruments = close.columns.tolist()
-        sector_s = pd.Series(
-            {i: self.sector_map.get(i, "Unknown") for i in instruments}
-        )
-
         pieces = []
 
-        for w in self.mom_windows:
-            f = self._sector_momentum(rets, sector_s, w)
-            pieces.append(f.stack().rename(f"sector_mom_{w}d"))
+        if self.sector_map:
+            sector_s = pd.Series(
+                {i: self.sector_map.get(i, "Unknown") for i in instruments}
+            )
+            for w in self.mom_windows:
+                f = self._sector_momentum(rets, sector_s, w)
+                pieces.append(f.stack().rename(f"sector_mom_{w}d"))
 
-        for w in self.mom_windows:
-            f = self._sector_rel_strength(rets, sector_s, w)
-            pieces.append(f.stack().rename(f"sector_rel_{w}d"))
+            for w in self.mom_windows:
+                f = self._sector_rel_strength(rets, sector_s, w)
+                pieces.append(f.stack().rename(f"sector_rel_{w}d"))
 
-        for w in [5, 20]:
-            f = self._stock_vs_sector(rets, sector_s, w)
-            pieces.append(f.stack().rename(f"stock_vs_sector_{w}d"))
+            for w in [5, 20]:
+                f = self._stock_vs_sector(rets, sector_s, w)
+                pieces.append(f.stack().rename(f"stock_vs_sector_{w}d"))
 
-        for w in self.rev_windows:
-            f = self._sector_reversal(rets, sector_s, w)
-            pieces.append(f.stack().rename(f"sector_rev_{w}d"))
+            for w in self.rev_windows:
+                f = self._sector_reversal(rets, sector_s, w)
+                pieces.append(f.stack().rename(f"sector_rev_{w}d"))
 
-        for w in [10, 20]:
-            f = self._sector_vol(rets, sector_s, w)
-            pieces.append(f.stack().rename(f"sector_vol_{w}d"))
+            for w in [10, 20]:
+                f = self._sector_vol(rets, sector_s, w)
+                pieces.append(f.stack().rename(f"sector_vol_{w}d"))
 
-        # Categorical sector id
-        sector_id = self._sector_id(instruments, sector_s)
-        id_df = pd.DataFrame(
-            {inst: sector_id[inst] for inst in instruments},
-            index=close.index,
-        )
-        pieces.append(id_df.stack().rename("sector_id"))
+            sector_id = self._sector_id(instruments, sector_s)
+            id_df = pd.DataFrame(
+                {inst: sector_id[inst] for inst in instruments},
+                index=close.index,
+            )
+            pieces.append(id_df.stack().rename("sector_id"))
+
+        # Concept factors (短期动量更有效)
+        if self.concept_map:
+            concept_s = pd.Series(
+                {i: self.concept_map.get(i, "Unknown") for i in instruments}
+            )
+            for w in [5, 10, 20]:
+                f = self._sector_momentum(rets, concept_s, w)
+                pieces.append(f.stack().rename(f"concept_mom_{w}d"))
+
+            for w in [5, 10]:
+                f = self._sector_rel_strength(rets, concept_s, w)
+                pieces.append(f.stack().rename(f"concept_rel_{w}d"))
+
+            concept_id = self._sector_id(instruments, concept_s)
+            cid_df = pd.DataFrame(
+                {inst: concept_id[inst] for inst in instruments},
+                index=close.index,
+            )
+            pieces.append(cid_df.stack().rename("concept_id"))
 
         result = pd.concat(pieces, axis=1)
         result.index.names = ["datetime", "instrument"]
