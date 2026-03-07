@@ -1,6 +1,6 @@
 # quant_ex
 
-基于 **qlib + LightGBM (Alpha158)** 的 A 股量化选股框架，支持因子挖掘、策略回测、自动信号生成与多渠道推送，并集成 Claude AI 进行参数自动优化。
+基于 **qlib + Alpha158** 的 A 股量化选股框架，支持多模型训练、因子挖掘、策略回测、每日信号生成与多渠道推送，并集成 Claude AI 进行参数自动优化。
 
 ---
 
@@ -27,12 +27,12 @@
 - **行业因子**：19 个行业轮动特征（动量 / 相对强弱 / 超额收益 / 反转 / 波动率 / 行业 ID）
 - **自动因子挖掘**：10 类因子表达式模板，枚举 + Rank-IC/ICIR 过滤，自动发现有效 alpha
 - **灵活模型**：
-  - qlib 原生 LGBModel（带 MLflow 实验管理）
-  - 自定义 `LGBMAlphaModel`（支持注入行业 + 挖掘因子）
+  - qlib 原生 `LGBModel`（带 MLflow 实验管理）
+  - 自定义 `lgbm` / `xgb` / `ridge` / `lasso` 模型（保存为 `.pkl`）
 - **TopkDropout 策略**：可配置 topk / n_drop / hold_thresh，支持参数网格搜索
 - **AI 自动优化**：基于 Claude API 迭代分析回测结果，自动缩小搜索空间
 - **每日信号**：一键生成目标持仓 + 买卖信号，格式化报告
-- **多渠道推送**：Bark（iOS）、PushPlus（微信）、钉钉、Server 酱
+- **多渠道推送**：Bark（iOS）、PushPlus、钉钉、Server 酱、微信公众号模板消息
 - **东方财富数据爬取**：独立 crawler 模块，支持板块/个股实时行情、资金流向、K线、成分股查询，内置 Python SDK 与完整板块代码枚举
 
 ---
@@ -43,7 +43,7 @@
 配置层        config/base.yaml + model.yaml + strategy.yaml + notify.yaml
                     ↓ deep-merge
 数据层        DataLoader → qlib D.features() / DatasetH
-              UniverseFilter → 排除科创板 / ST / 黑名单 / 价格 & 流动性过滤
+              UniverseFilter → 排除科创板 / 黑名单 / 最低价格过滤
               SectorDataProvider → akshare (7 天本地缓存)
                     ↓
 特征层        Alpha158 (158 个技术因子)
@@ -52,14 +52,14 @@
                     ↓
 模型层        ModelTrainer
               ├── qlib_native → qlib.LGBModel + MLflow 记录
-              └── custom     → LGBMAlphaModel (.pkl)
+              └── custom     → lgbm / xgb / ridge / lasso (.pkl)
                     ↓
 回测层        BacktestEngine → qlib backtest_daily / TopkDropoutStrategy
               GridSearchBacktest → 多参数组合并行评估
               AutoOptimizer → Claude API 迭代建议
                     ↓
 信号层        SignalGenerator → TopK 持仓 + 买卖信号差分
-              NotificationPusher → Bark / PushPlus / DingTalk / Server 酱
+              NotificationPusher → Bark / PushPlus / DingTalk / Server 酱 / WeChat MP
 ```
 
 ---
@@ -79,6 +79,9 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
 # 安装依赖
 pip install -r requirements.txt
+
+# 可选：按包方式安装，启用 qx-train / qx-daily / qx-backtest 命令
+pip install -e .
 ```
 
 ### 2. 准备数据
@@ -95,13 +98,20 @@ python -m qlib.run.get_data qlib_data --target_dir ~/qlib_data/cn_data --region 
 # 修改 qlib 数据路径
 vi config/base.yaml
 # 将 qlib.provider_uri 设置为实际路径
+
+# 如需启用通知，先复制模板
+cp config/notify.yaml.example config/notify.yaml
 ```
 
 ### 4. 训练模型
 
 ```bash
-python run_train.py
-# 训练完成后，复制输出的 Recorder ID 填入 config/base.yaml 的 latest_recorder_id
+# 方式 1：qlib 原生 LGBModel（会输出 Recorder ID）
+python run_train.py --qlib-native
+
+# 方式 2：自定义模型（保存到 models/*.pkl）
+python run_train.py --model lgbm --tag baseline
+python run_train.py --model lgbm --with-sector --tag sector_full
 ```
 
 ### 5. 生成每日信号
@@ -109,6 +119,9 @@ python run_train.py
 ```bash
 # 收盘后运行（17:00 之后）
 python run_daily.py
+
+# 直接加载自定义模型文件
+python run_daily.py --model-path models/lgbm_sector_full_20260308_143021.pkl
 
 # 指定当前持仓（股票代码:股数）
 python run_daily.py --positions SH600000:500,SZ000001:300
@@ -122,6 +135,8 @@ python run_daily.py --dry-run
 ## 配置说明
 
 所有配置采用 **YAML 深度合并**：`base.yaml → model.yaml → strategy.yaml → notify.yaml`，越后越优先。
+
+说明：`notify.yaml` 默认不入库，通常从 `config/notify.yaml.example` 复制生成。
 
 ### config/base.yaml
 
@@ -142,36 +157,44 @@ training:
   test_start: "2024-07-01"
 
 experiment:
-  name: quant_ex_alpha158
-  latest_recorder_id: ""   # 训练后填入
+  name: tutorial_exp
+  latest_recorder_id: ""   # qlib-native 训练后填入；若使用 .pkl 可改走 --model-path
 ```
 
 ### config/model.yaml
 
 ```yaml
-lightgbm:
-  n_estimators: 1000
-  learning_rate: 0.05
-  max_depth: 8
+model:
+  type: lgbm
 
-features:
-  use_sector_factors: true
-  sector_momentum_windows: [5, 10, 20, 60]
+  lightgbm:
+    n_estimators: 1000
+    learning_rate: 0.05
+    max_depth: 8
+
+  features:
+    factors:
+      - name: technical
+      # - name: sector   # 需配合 run_train.py --with-sector
 ```
 
 ### config/strategy.yaml
 
 ```yaml
-topk_dropout:
-  topk: 10
-  n_drop: 3
-  hold_thresh: 5
+strategy:
+  topk_dropout:
+    topk: 10
+    n_drop: 3
+    hold_thresh: 5
 
-universe_filter:
-  exclude_kcb: true   # 排除科创板
-  exclude_st: true
-  exclude_list: ["SZ300442"]
-  min_price: 2.0
+  universe_filter:
+    exclude_kcb: true
+    exclude_list: ["SZ300442"]
+    min_price: 2.0
+
+backtest:
+  account: 1000000
+  open_cost: 0.0005
 ```
 
 ### config/notify.yaml
@@ -193,6 +216,13 @@ dingtalk:
 serverchan:
   enabled: false
   send_key: ""
+
+wechat_mp:
+  enabled: false
+  appid: ""
+  appsecret: ""
+  template_id: ""
+  openids: [""]
 ```
 
 ---
@@ -202,17 +232,21 @@ serverchan:
 ### run_train.py — 模型训练
 
 ```bash
-# 使用 qlib 原生训练（推荐，结果记录到 MLflow）
-python run_train.py
+# 使用 qlib 原生训练（结果记录到 MLflow）
+python run_train.py --qlib-native
 
-# 使用自定义模型（支持行业因子注入）
-python run_train.py --no-qlib --with-sector
+# 使用自定义模型（保存到 models/*.pkl）
+python run_train.py --model lgbm --tag baseline
+python run_train.py --model xgb --tag xgb_baseline
+python run_train.py --model lgbm --with-sector --tag sector_full
 
 # 指定配置文件
 python run_train.py --config my_config.yaml
 ```
 
-训练完成后，将输出的 `Recorder ID` 填入 `config/base.yaml` 的 `latest_recorder_id` 字段。
+`--qlib-native` 会输出 `Recorder ID`，需要回填到 `config/base.yaml` 的 `experiment.latest_recorder_id`。
+
+自定义模型会保存到 `models/` 目录，可在后续通过 `--model-path` 直接加载，无需配置 Recorder。
 
 ---
 
@@ -223,6 +257,7 @@ python run_daily.py
 python run_daily.py --dry-run                                # 不发推送
 python run_daily.py --account 500000                         # 指定账户金额（默认 1,000,000）
 python run_daily.py --positions SH600000:500,SZ000001:300   # 指定当前持仓
+python run_daily.py --model-path models/lgbm_baseline_xxx.pkl
 ```
 
 输出示例：
@@ -246,6 +281,9 @@ python run_daily.py --positions SH600000:500,SZ000001:300   # 指定当前持仓
 ```bash
 # 使用默认参数网格
 python run_backtest.py
+
+# 直接回测自定义模型文件
+python run_backtest.py --model-path models/lgbm_baseline_xxx.pkl
 
 # 自定义参数范围
 python run_backtest.py --topk 5,10,15,20 --n-drop 1,3,5 --hold-thresh 3,5,10
@@ -277,17 +315,17 @@ python run_factor_mining.py --min-ic 0.03 --min-icir 0.4 --top-n 30
 | 模块 | 文件 | 功能 |
 |------|------|------|
 | 数据加载 | `data/loader.py` | 封装 qlib D.features，构建 DatasetH |
-| 股票池过滤 | `data/universe.py` | 排除科创板 / ST / 黑名单 / 最低价格 |
+| 股票池过滤 | `data/universe.py` | 排除科创板 / 黑名单 / 最低价格 |
 | 行业数据 | `data/sector.py` | akshare 行业映射，7 天 TTL 缓存 |
 | 行业因子 | `features/sector_factors.py` | 19 个行业轮动因子 |
 | 因子挖掘 | `features/factor_mining.py` | 基于模板的 alpha 因子自动发现 |
-| 模型封装 | `models/lgbm_model.py` | LightGBM + 行业/挖掘因子注入 |
+| 模型封装 | `models/lgbm_model.py` / `models/xgb_model.py` / `models/linear_model.py` | LightGBM / XGBoost / Ridge / Lasso 模型实现 |
 | 训练管理 | `models/trainer.py` | qlib_native（MLflow）/ custom（pkl）双模式 |
 | 回测引擎 | `backtest/engine.py` | 封装 qlib backtest_daily |
 | 网格搜索 | `backtest/grid_search.py` | 多参数组合回测，Sharpe 排序 |
 | 性能指标 | `backtest/metrics.py` | 年化收益、Sharpe、最大回撤、Calmar 等 |
 | 信号生成 | `signals/generator.py` | TopK 持仓计算 + 差分交易信号 |
-| 推送通知 | `notify/pusher.py` | Bark / PushPlus / 钉钉 / Server 酱 |
+| 推送通知 | `notify/pusher.py` | Bark / PushPlus / 钉钉 / Server 酱 / 微信公众号模板消息 |
 | AI 优化器 | `agent/auto_optimizer.py` | Claude API 迭代参数优化 |
 | 配置管理 | `utils/config.py` | YAML 深度合并加载 |
 | 日志 | `utils/logger.py` | 文件 + 控制台日志 |
@@ -380,7 +418,7 @@ python crawler/scripts/fetch_sector_stocks.py --proxy http://127.0.0.1:7890 --ty
 
 ## 通知渠道
 
-在 `config/notify.yaml` 中启用对应渠道并填入凭证：
+先执行 `cp config/notify.yaml.example config/notify.yaml`，再在 `config/notify.yaml` 中启用对应渠道并填入凭证：
 
 | 渠道 | 说明 | 获取方式 |
 |------|------|----------|
@@ -388,6 +426,7 @@ python crawler/scripts/fetch_sector_stocks.py --proxy http://127.0.0.1:7890 --ty
 | **PushPlus** | 微信推送 | 注册 [PushPlus](http://www.pushplus.plus/) 获取 Token |
 | **钉钉** | 钉钉群机器人 | 钉钉群 → 机器人管理 → Webhook + 可选安全密钥 |
 | **Server 酱** | 微信推送 | 注册 [Server酱](https://sct.ftqq.com/) 获取 SendKey |
+| **微信公众号** | 模板消息推送 | 微信公众平台服务号 → AppID / AppSecret / 模板 ID / OpenID |
 
 ---
 
@@ -430,6 +469,16 @@ pip install -r requirements.txt
 | `requests` | 推送通知 HTTP 请求 |
 | `mlflow` | 模型实验管理（qlib 依赖） |
 
+## 开发与测试
+
+```bash
+# 安装开发依赖
+pip install -e .[dev]
+
+# 运行当前仓库已有测试
+python -m pytest test/test_universe_filter.py test/test_trainer.py
+```
+
 ---
 
 ## 目录结构
@@ -440,7 +489,8 @@ quant_ex/
 │   ├── base.yaml          # 基础配置（qlib 路径、市场、训练区间）
 │   ├── model.yaml         # 模型超参数
 │   ├── strategy.yaml      # 策略参数 & 回测设置
-│   └── notify.yaml        # 推送通知凭证
+│   ├── notify.yaml.example# 推送通知模板
+│   └── notify.yaml        # 本地复制生成的通知凭证（可选，不入库）
 ├── data/
 │   ├── loader.py          # qlib 数据加载封装
 │   ├── universe.py        # 股票池过滤
@@ -486,8 +536,13 @@ quant_ex/
 **Q: 运行时提示 `qlib not initialized`？**
 A: 确认 `config/base.yaml` 中 `qlib.provider_uri` 指向正确的 qlib 数据目录，且目录内有 `calendars/`、`instruments/` 等子目录。
 
-**Q: 训练后 `run_daily.py` 报错找不到 Recorder？**
-A: 将 `run_train.py` 输出的 Recorder ID 填入 `config/base.yaml` → `experiment.latest_recorder_id`。
+**Q: 训练后 `run_daily.py` / `run_backtest.py` 报错找不到模型？**
+A: 有两种方式：
+1. `--qlib-native` 训练后，把 `Recorder ID` 填入 `config/base.yaml` → `experiment.latest_recorder_id`。
+2. 自定义模型训练后，直接使用 `--model-path models/xxx.pkl`。
+
+**Q: `strategy.universe_filter.exclude_st` 和 `min_avg_volume_m` 为什么没明显生效？**
+A: 这两个字段目前仍是预留配置，当前代码实际接入的是 `exclude_kcb`、`exclude_list` 和 `min_price`。如需 ST 或流动性过滤，需要额外行情/证券状态数据源再接入。
 
 **Q: 行业数据加载失败？**
 A: 检查网络连接（akshare 需要访问东方财富数据接口）。也可删除 `cache/sector_map.json` 强制刷新。

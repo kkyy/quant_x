@@ -17,11 +17,11 @@ strategy:
 
   universe_filter:
     exclude_kcb: true            # 排除科创板 (SH688xxx)
-    exclude_st: true             # 排除ST股（需要额外数据支持）
+    exclude_st: true             # 预留字段：当前未接入 ST 状态数据源
     exclude_list:                # 手动排除的股票代码列表
       - "SZ300442"
-    min_price: 2.0               # 最低股价过滤
-    min_avg_volume_m: 0.5        # 最低日均成交额（百万元）
+    min_price: 2.0               # 最低股价过滤（run_daily / run_backtest 已生效）
+    min_avg_volume_m: 0.5        # 预留字段：当前未接入成交额过滤逻辑
 
 backtest:
   start_time: "2025-01-01"
