@@ -17,9 +17,18 @@
 """
 from __future__ import annotations
 import argparse
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# PYTHONHASHSEED must be set before the interpreter starts to take effect.
+# Skip re-exec when running as a seed-worker subprocess (grid_search multi-seed),
+# because the worker already has PYTHONHASHSEED set to its target seed value.
+if (os.environ.get("PYTHONHASHSEED") != "42"
+        and os.environ.get("_QUANT_EX_SEED_WORKER") != "1"):
+    os.environ["PYTHONHASHSEED"] = "42"
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -67,6 +76,7 @@ def main(
     end: str = None,
     optimize: bool = False,
     n_iters: int = 3,
+    multi_seed: bool = False,
 ):
     config = load_config(config_path)
     today = datetime.now().strftime("%Y-%m-%d")
@@ -88,6 +98,16 @@ def main(
         },
         instruments=config.get("market", {}).get("name", "csi300"),
     )
+
+    # ── 刷新板块/技术因子（如果模型存有 factor_pipeline）────────────────────────
+    if getattr(model, "factor_pipeline", None) is not None:
+        logger.info("模型含有 factor_pipeline，重新计算额外因子以覆盖完整回测区间 …")
+        price_data = data_loader.load_price_data(
+            instruments=config.get("market", {}).get("name", "csi300"),
+            start_time=tcfg.get("fit_start", "2015-01-01"),
+            end_time=end or today,
+        )
+        model.refresh_extra_factors(price_data)
 
     # ── 生成预测 ──────────────────────────────────────────────────────────────
     pred = model.predict(dataset, segment="test")
@@ -133,6 +153,7 @@ def main(
             param_grid=param_grid,
             start_time=start,
             end_time=end,
+            multi_seed=multi_seed,
         )
 
         print("\n=== 网格搜索结果 ===")
@@ -168,6 +189,8 @@ if __name__ == "__main__":
     parser.add_argument("--end",         type=str, default=None)
     parser.add_argument("--optimize",    action="store_true", help="使用 AI Agent 迭代优化")
     parser.add_argument("--n-iters",     type=int, default=3)
+    parser.add_argument("--seeds",       action="store_true",
+                        help="多 seed 评估：用 5 个内置 seed 跑每个参数组合并取平均，结果更稳健")
     args = parser.parse_args()
 
     main(
@@ -180,4 +203,5 @@ if __name__ == "__main__":
         end=args.end,
         optimize=args.optimize,
         n_iters=args.n_iters,
+        multi_seed=args.seeds,
     )

@@ -35,6 +35,7 @@ class BacktestEngine:
         end_time: Optional[str] = None,
         account: Optional[float] = None,
         universe_filter=None,
+        seed: int = 42,
     ) -> Tuple[pd.DataFrame, Dict]:
         """
         Run a single backtest.
@@ -63,6 +64,9 @@ class BacktestEngine:
         n_drop     = sp.get("n_drop",     strat_cfg.get("n_drop",     3))
         hold_thresh = sp.get("hold_thresh", strat_cfg.get("hold_thresh", 5))
 
+        import random, numpy as np
+        random.seed(seed)
+        np.random.seed(seed)
         strategy = TopkDropoutStrategy(
             signal=pred,
             topk=topk,

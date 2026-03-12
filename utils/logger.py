@@ -2,8 +2,12 @@
 from __future__ import annotations
 import logging
 import sys
+import warnings
 from pathlib import Path
 from datetime import datetime
+
+# qlib index_data.py 在空切片上求均值时触发，属正常边界情况，无需暴露给用户
+warnings.filterwarnings("ignore", message="Mean of empty slice", category=RuntimeWarning, module="qlib")
 
 
 def setup_logger(

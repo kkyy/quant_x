@@ -61,6 +61,7 @@ def main(
     model_name: str = None,
     qlib_native: bool = False,
     with_sector: bool = False,
+    no_extra_factors: bool = False,
     tag: str = None,
 ):
     config = load_config(config_path)
@@ -76,7 +77,7 @@ def main(
 
     price_data = None
     feat_cfg = config.get("model", {}).get("features", {})
-    needs_price = (
+    needs_price = not no_extra_factors and (
         with_sector
         or feat_cfg.get("factors")
         or feat_cfg.get("use_sector_factors")
@@ -95,15 +96,16 @@ def main(
     # Build sector map if needed
     if with_sector and sector_provider is not None:
         logger.info("加载板块数据 …")
-        sector_provider.load()
+        sector_provider.get_map()
 
     trainer = ModelTrainer(config, data_loader, sector_provider)
 
-    model, dataset, rid = trainer.train(
+    model, _, rid = trainer.train(
         model_name=model_name,
         qlib_native=qlib_native,
         price_data=price_data,
         use_sector_factors=with_sector,
+        skip_factor_pipeline=no_extra_factors,
         tag=tag,
     )
 
@@ -135,6 +137,8 @@ if __name__ == "__main__":
                         help="使用 qlib 原生 LGBModel + MLflow 记录")
     parser.add_argument("--with-sector",  action="store_true",
                         help="加入板块轮动因子")
+    parser.add_argument("--no-extra-factors", action="store_true",
+                        help="跳过所有额外因子（含技术因子），仅使用 Alpha158 原始特征")
     parser.add_argument("--tag",          type=str,  default=None,
                         help="实验标签，用于命名模型文件，例如 baseline | sector_ablation")
     parser.add_argument("--list-registry", action="store_true",
@@ -155,5 +159,6 @@ if __name__ == "__main__":
         model_name=args.model,
         qlib_native=args.qlib_native,
         with_sector=args.with_sector,
+        no_extra_factors=args.no_extra_factors,
         tag=args.tag,
     )

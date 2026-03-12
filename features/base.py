@@ -25,6 +25,7 @@ print(FactorRegistry.list())
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Type
@@ -168,7 +169,19 @@ class FactorPipeline:
         for cfg in factor_configs:
             cfg = dict(cfg)  # copy so we don't mutate caller's data
             name = cfg.pop("name")
-            init_kwargs = {**shared_kwargs, **cfg}
+            # Filter shared_kwargs to only those accepted by this factor's __init__
+            factor_cls = FactorRegistry.get(name)
+            sig = inspect.signature(factor_cls.__init__)
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
+            if has_var_keyword:
+                filtered_shared = shared_kwargs
+            else:
+                accepted = set(sig.parameters) - {"self"}
+                filtered_shared = {k: v for k, v in shared_kwargs.items() if k in accepted}
+            init_kwargs = {**filtered_shared, **cfg}
             try:
                 factor = FactorRegistry.build(name, **init_kwargs)
                 factors.append(factor)

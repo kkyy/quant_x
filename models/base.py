@@ -83,7 +83,17 @@ class BaseAlphaModel(ABC):
     ) -> pd.DataFrame:
         """Concatenate extra factor columns to X, aligned by index."""
         if extra_factors is not None and not extra_factors.empty:
-            return pd.concat([X, extra_factors.reindex(X.index)], axis=1)
+            ef = extra_factors
+            # qlib DatasetH returns (datetime, instrument) order while our factor
+            # pipeline produces (instrument, datetime) order – reorder if needed.
+            if (
+                isinstance(ef.index, pd.MultiIndex)
+                and isinstance(X.index, pd.MultiIndex)
+                and ef.index.names != X.index.names
+                and set(ef.index.names) == set(X.index.names)
+            ):
+                ef = ef.reorder_levels(X.index.names)
+            return pd.concat([X, ef.reindex(X.index)], axis=1)
         return X
 
 

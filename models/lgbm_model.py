@@ -54,6 +54,7 @@ class LGBMAlphaModel(BaseAlphaModel):
         lgbm_params: Optional[Dict[str, Any]] = None,
         extra_factors: Optional[pd.DataFrame] = None,
         categorical_features: Optional[List[str]] = None,
+        factor_pipeline=None,
         # legacy params kept for backward compatibility
         sector_factors: Optional[pd.DataFrame] = None,
         custom_factors: Optional[pd.DataFrame] = None,
@@ -62,6 +63,7 @@ class LGBMAlphaModel(BaseAlphaModel):
         self.categorical_features = categorical_features or ["sector_id"]
         self.model = None
         self.feature_names_: Optional[List[str]] = None
+        self.factor_pipeline = factor_pipeline
 
         # Build unified extra_factors from all sources
         parts = [df for df in (extra_factors, sector_factors, custom_factors)
@@ -79,9 +81,10 @@ class LGBMAlphaModel(BaseAlphaModel):
     def fit(self, dataset, **kwargs) -> "LGBMAlphaModel":
         import lightgbm as lgb
 
-        X_tr, y_tr = dataset.prepare("train", col_set=["feature", "label"], data_key="learn")
-        X_va, y_va = dataset.prepare("valid", col_set=["feature", "label"], data_key="learn")
-        y_tr, y_va = y_tr.squeeze(), y_va.squeeze()
+        df_tr = dataset.prepare("train", col_set=["feature", "label"], data_key="learn")
+        df_va = dataset.prepare("valid", col_set=["feature", "label"], data_key="learn")
+        X_tr, y_tr = df_tr["feature"], df_tr["label"].squeeze()
+        X_va, y_va = df_va["feature"], df_va["label"].squeeze()
 
         X_tr = self._merge_extra(X_tr, self.extra_factors)
         X_va = self._merge_extra(X_va, self.extra_factors)
@@ -127,6 +130,26 @@ class LGBMAlphaModel(BaseAlphaModel):
         )
         preds = self.model.predict(X)
         return pd.Series(preds, index=X.index, name="score")
+
+    def refresh_extra_factors(self, price_data: pd.DataFrame) -> None:
+        """Recompute extra_factors using the stored pipeline and fresh price data.
+
+        Call this in backtest when the test period extends beyond the training date,
+        so that sector/technical factors are available for the full evaluation window.
+        """
+        if self.factor_pipeline is None:
+            logger.debug("No factor_pipeline stored; skipping refresh.")
+            return
+        logger.info("Refreshing extra factors from stored pipeline …")
+        new_factors = self.factor_pipeline.compute(price_data)
+        if new_factors is not None and not new_factors.empty:
+            self.extra_factors = new_factors
+            logger.info(
+                f"Extra factors refreshed: {len(new_factors.columns)} cols, "
+                f"{len(new_factors)} rows"
+            )
+        else:
+            logger.warning("Pipeline returned no factors; extra_factors unchanged.")
 
     # ── diagnostics ───────────────────────────────────────────────────────────
 

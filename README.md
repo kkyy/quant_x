@@ -29,7 +29,7 @@
 - **灵活模型**：
   - qlib 原生 `LGBModel`（带 MLflow 实验管理）
   - 自定义 `lgbm` / `xgb` / `ridge` / `lasso` 模型（保存为 `.pkl`）
-- **TopkDropout 策略**：可配置 topk / n_drop / hold_thresh，支持参数网格搜索
+- **TopkDropout 策略**：可配置 topk / n_drop / hold_thresh，支持参数网格搜索与多 seed 稳健评估
 - **AI 自动优化**：基于 Claude API 迭代分析回测结果，自动缩小搜索空间
 - **每日信号**：一键生成目标持仓 + 买卖信号，格式化报告
 - **多渠道推送**：Bark（iOS）、PushPlus、钉钉、Server 酱、微信公众号模板消息
@@ -134,9 +134,10 @@ python run_daily.py --dry-run
 
 ## 配置说明
 
-所有配置采用 **YAML 深度合并**：`base.yaml → model.yaml → strategy.yaml → notify.yaml`，越后越优先。
+所有配置采用 **YAML 深度合并**：`base.yaml → model.yaml → notify.yaml`，越后越优先。
 
 说明：`notify.yaml` 默认不入库，通常从 `config/notify.yaml.example` 复制生成。
+策略/回测参数（`strategy.topk_dropout`、`backtest`、`universe_filter`）现在统一在 `config/base.yaml` 中配置，`strategy.yaml` 已移除。
 
 ### config/base.yaml
 
@@ -176,25 +177,6 @@ model:
     factors:
       - name: technical
       # - name: sector   # 需配合 run_train.py --with-sector
-```
-
-### config/strategy.yaml
-
-```yaml
-strategy:
-  topk_dropout:
-    topk: 10
-    n_drop: 3
-    hold_thresh: 5
-
-  universe_filter:
-    exclude_kcb: true
-    exclude_list: ["SZ300442"]
-    min_price: 2.0
-
-backtest:
-  account: 1000000
-  open_cost: 0.0005
 ```
 
 ### config/notify.yaml
@@ -239,6 +221,9 @@ python run_train.py --qlib-native
 python run_train.py --model lgbm --tag baseline
 python run_train.py --model xgb --tag xgb_baseline
 python run_train.py --model lgbm --with-sector --tag sector_full
+
+# 仅使用 Alpha158 原始特征（跳过所有额外因子，适合消融实验）
+python run_train.py --model lgbm --no-extra-factors --tag alpha158_only
 
 # 指定配置文件
 python run_train.py --config my_config.yaml
@@ -290,6 +275,9 @@ python run_backtest.py --topk 5,10,15,20 --n-drop 1,3,5 --hold-thresh 3,5,10
 
 # 指定回测区间
 python run_backtest.py --start 2024-01-01 --end 2025-12-31
+
+# 多 seed 稳健评估：用 5 个内置 seed 跑每组参数并取均值（每个 seed 在独立子进程中运行以隔离 PYTHONHASHSEED）
+python run_backtest.py --seeds
 
 # 启用 Claude AI 自动优化（需配置 ANTHROPIC_API_KEY）
 python run_backtest.py --optimize --n-iters 3
@@ -486,9 +474,8 @@ python -m pytest test/test_universe_filter.py test/test_trainer.py
 ```
 quant_ex/
 ├── config/
-│   ├── base.yaml          # 基础配置（qlib 路径、市场、训练区间）
+│   ├── base.yaml          # 基础配置（qlib 路径、市场、训练区间、策略/回测参数）
 │   ├── model.yaml         # 模型超参数
-│   ├── strategy.yaml      # 策略参数 & 回测设置
 │   ├── notify.yaml.example# 推送通知模板
 │   └── notify.yaml        # 本地复制生成的通知凭证（可选，不入库）
 ├── data/

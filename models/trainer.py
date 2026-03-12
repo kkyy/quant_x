@@ -67,6 +67,7 @@ class ModelTrainer:
         factor_pipeline: Optional[FactorPipeline] = None,
         experiment_name: Optional[str] = None,
         tag: Optional[str] = None,
+        skip_factor_pipeline: bool = False,
         # legacy compat
         use_sector_factors: bool = False,
     ) -> Tuple:
@@ -105,7 +106,7 @@ class ModelTrainer:
             return self._train_qlib(dataset, exp_name)
 
         # Build factor pipeline if not provided
-        if factor_pipeline is None:
+        if not skip_factor_pipeline and factor_pipeline is None:
             factor_pipeline = self._build_factor_pipeline(
                 price_data=price_data,
                 use_sector_factors=use_sector_factors,
@@ -122,7 +123,11 @@ class ModelTrainer:
                     f"{len(extra_factors)} rows"
                 )
 
-        return self._train_custom(dataset, model_name, extra_factors, tag=tag)
+        return self._train_custom(
+            dataset, model_name, extra_factors,
+            factor_pipeline=factor_pipeline, tag=tag,
+            use_sector_factors=use_sector_factors,
+        )
 
     # ── private ───────────────────────────────────────────────────────────────
 
@@ -166,7 +171,9 @@ class ModelTrainer:
         dataset,
         model_name: str,
         extra_factors: Optional[pd.DataFrame],
+        factor_pipeline: Optional[FactorPipeline] = None,
         tag: Optional[str] = None,
+        use_sector_factors: bool = False,
     ):
         """Instantiate and train any model from the registry."""
         import json as _json
@@ -174,7 +181,7 @@ class ModelTrainer:
         model_cfg = self.config.get("model", {})
 
         # Build model-specific kwargs from config
-        kwargs = self._model_kwargs(model_name, model_cfg, extra_factors)
+        kwargs = self._model_kwargs(model_name, model_cfg, extra_factors, factor_pipeline)
 
         logger.info(f"Training model '{model_name}' …")
         model = ModelRegistry.build(model_name, **kwargs)
@@ -193,6 +200,9 @@ class ModelTrainer:
             "safe_tag": safe_tag,
             "ts": ts,
             "extra_factor_cols": list(extra_factors.columns) if extra_factors is not None else [],
+            "runtime_flags": {
+                "use_sector_factors": use_sector_factors,
+            },
             "config_snapshot": {
                 "training": self.config.get("training", {}),
                 "market": self.config.get("market", {}),
@@ -211,12 +221,15 @@ class ModelTrainer:
         model_name: str,
         model_cfg: dict,
         extra_factors: Optional[pd.DataFrame],
+        factor_pipeline: Optional[FactorPipeline] = None,
     ) -> dict:
         """Derive __init__ kwargs for the chosen model from config."""
         base = {"extra_factors": extra_factors}
 
         if model_name == "lgbm":
             base["lgbm_params"] = model_cfg.get("lightgbm", {})
+            if factor_pipeline is not None:
+                base["factor_pipeline"] = factor_pipeline
 
         elif model_name == "xgb":
             base["xgb_params"] = model_cfg.get("xgboost", {})
@@ -248,7 +261,13 @@ class ModelTrainer:
         factor_list = feat_cfg.get("factors", None)
 
         if factor_list:
-            # Build from explicit config list
+            # Build from explicit config list.
+            # If --with-sector is active and "sector" is not already listed, inject it.
+            factor_list = list(factor_list)
+            has_sector = any(f.get("name") == "sector" for f in factor_list)
+            if use_sector_factors and not has_sector and self.sector_provider is not None:
+                factor_list.append({"name": "sector"})
+                logger.info("--with-sector: 动态注入 sector 因子到 pipeline")
             shared = {}
             if self.sector_provider is not None:
                 shared["sector_map"] = self.sector_provider.get_map()
