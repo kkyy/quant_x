@@ -22,6 +22,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
+
 # PYTHONHASHSEED must be set before the interpreter starts to take effect.
 # Skip re-exec when running as a seed-worker subprocess (grid_search multi-seed),
 # because the worker already has PYTHONHASHSEED set to its target seed value.
@@ -36,16 +38,23 @@ from quant_ex.utils.logger import setup_logger
 from quant_ex.utils.config import load_config
 from quant_ex.utils.qlib_utils import load_recorder_model
 from quant_ex.data.loader import DataLoader
+from quant_ex.data.sector import SectorDataProvider
 from quant_ex.data.universe import UniverseFilter
 from quant_ex.backtest.engine import BacktestEngine
 from quant_ex.backtest.grid_search import GridSearchBacktest
 from quant_ex.backtest.metrics import format_metrics
+from quant_ex.backtest.signal_diagnostics import compute_signal_ic
+from quant_ex.signals.postprocess import postprocess_signal
 
 logger = setup_logger("run_backtest")
 
 
 def parse_ints(s: str) -> list:
     return [int(x.strip()) for x in s.split(",") if x.strip()]
+
+
+def parse_strings(s: str) -> list:
+    return [x.strip() for x in s.split(",") if x.strip()]
 
 
 def _load_model(config: dict, model_path: str = None):
@@ -77,6 +86,9 @@ def main(
     optimize: bool = False,
     n_iters: int = 3,
     multi_seed: bool = False,
+    market: str = None,
+    markets: list = None,
+    explore_markets: bool = False,
 ):
     config = load_config(config_path)
     today = datetime.now().strftime("%Y-%m-%d")
@@ -86,40 +98,28 @@ def main(
     # ── 加载模型 ──────────────────────────────────────────────────────────────
     model = _load_model(config, model_path)
 
-    # ── 构建数据集 ────────────────────────────────────────────────────────────
     data_loader = DataLoader(config)
     universe_filter = UniverseFilter(config.get("strategy", {}))
-    tcfg = config.get("training", {})
-    dataset = data_loader.build_dataset(
-        segments={
-            "train": (tcfg.get("fit_start", "2015-01-01"), tcfg.get("fit_end", "2021-12-31")),
-            "valid": (tcfg.get("valid_start", "2022-01-01"), tcfg.get("valid_end", "2023-12-31")),
-            "test":  (tcfg.get("test_start", "2024-01-01"), today),
-        },
-        instruments=config.get("market", {}).get("name", "csi300"),
+    sector_provider = (
+        SectorDataProvider(config)
+        if config.get("signal", {}).get("postprocess", {}).get("industry_neutralize", False)
+        else None
     )
-
-    # ── 刷新板块/技术因子（如果模型存有 factor_pipeline）────────────────────────
-    if getattr(model, "factor_pipeline", None) is not None:
-        logger.info("模型含有 factor_pipeline，重新计算额外因子以覆盖完整回测区间 …")
-        price_data = data_loader.load_price_data(
-            instruments=config.get("market", {}).get("name", "csi300"),
-            start_time=tcfg.get("fit_start", "2015-01-01"),
-            end_time=end or today,
-        )
-        model.refresh_extra_factors(price_data)
-
-    # ── 生成预测 ──────────────────────────────────────────────────────────────
-    pred = model.predict(dataset, segment="test")
-    if universe_filter.requires_price_data():
-        price_data = data_loader.load_price_data(
-            instruments=config.get("market", {}).get("name", "csi300"),
-            start_time=tcfg.get("test_start", "2024-01-01"),
-            end_time=end or today,
-        )
-        pred = universe_filter.filter(pred, price_data=price_data)
+    tcfg = config.get("training", {})
+    market_cfg = config.get("market", {})
+    base_market = market or market_cfg.get("name", "csi300")
+    if explore_markets:
+        eval_markets = markets or market_cfg.get("candidates") or [base_market]
     else:
-        pred = universe_filter.filter(pred)
+        eval_markets = markets or [base_market]
+    eval_markets = list(dict.fromkeys(eval_markets))
+
+    if optimize and len(eval_markets) > 1:
+        logger.warning(
+            "--optimize 仅支持单个候选池，本次使用第一个: %s",
+            eval_markets[0],
+        )
+        eval_markets = eval_markets[:1]
 
     # ── 构建参数网格 ──────────────────────────────────────────────────────────
     param_grid = {
@@ -134,6 +134,17 @@ def main(
 
     # ── 执行 ──────────────────────────────────────────────────────────────────
     if optimize:
+        pred = _predict_for_market(
+            model=model,
+            data_loader=data_loader,
+            universe_filter=universe_filter,
+            config=config,
+            instruments=eval_markets[0],
+            sector_provider=sector_provider,
+            start=start,
+            end=end,
+            today=today,
+        )
         from quant_ex.agent.auto_optimizer import AutoOptimizer
         logger.info("启动 AI 优化 Agent …")
         optimizer = AutoOptimizer()
@@ -148,13 +159,56 @@ def main(
         for r in records:
             print(f"  第{r['iteration']}轮最优: {r.get('best_params', {})}")
     else:
-        searcher = GridSearchBacktest(engine, pred, config)
-        results_df = searcher.run(
-            param_grid=param_grid,
-            start_time=start,
-            end_time=end,
-            multi_seed=multi_seed,
+        result_frames = []
+        for eval_market in eval_markets:
+            logger.info("=== 回测候选池: %s ===", eval_market)
+            pred = _predict_for_market(
+                model=model,
+                data_loader=data_loader,
+                universe_filter=universe_filter,
+                config=config,
+                instruments=eval_market,
+                sector_provider=sector_provider,
+                start=start,
+                end=end,
+                today=today,
+            )
+
+            searcher = GridSearchBacktest(engine, pred, config)
+            market_df = searcher.run(
+                param_grid=param_grid,
+                start_time=start,
+                end_time=end,
+                multi_seed=multi_seed,
+            )
+            diagnostics = _signal_diagnostics_for_market(
+                data_loader=data_loader,
+                pred=pred,
+                config=config,
+                instruments=eval_market,
+                start=start,
+                end=end,
+                today=today,
+            )
+            market_df.insert(0, "market", eval_market)
+            for key, value in diagnostics.items():
+                market_df[key] = value
+            result_frames.append(market_df)
+
+        results_df = (
+            pd.concat(result_frames, ignore_index=True)
+            if result_frames else pd.DataFrame()
         )
+        if "sharpe" in results_df.columns:
+            sort_cols = ["sharpe"]
+            ascending = [False]
+            if "sharpe_std" in results_df.columns:
+                sort_cols.append("sharpe_std")
+                ascending.append(True)
+            results_df = results_df.sort_values(
+                sort_cols,
+                ascending=ascending,
+            ).reset_index(drop=True)
 
         print("\n=== 网格搜索结果 ===")
         print(results_df.to_string())
@@ -177,11 +231,91 @@ def main(
             print(format_metrics(m))
 
 
+def _predict_for_market(
+    model,
+    data_loader: DataLoader,
+    universe_filter: UniverseFilter,
+    config: dict,
+    instruments: str,
+    sector_provider: SectorDataProvider = None,
+    start: str = None,
+    end: str = None,
+    today: str = None,
+):
+    """Build an evaluation dataset and prediction signal for one candidate pool."""
+    today = today or datetime.now().strftime("%Y-%m-%d")
+    tcfg = config.get("training", {})
+    segments = {
+        "train": (tcfg.get("fit_start", "2015-01-01"), tcfg.get("fit_end", "2021-12-31")),
+        "valid": (tcfg.get("valid_start", "2022-01-01"), tcfg.get("valid_end", "2023-12-31")),
+        "test":  (start or tcfg.get("test_start", "2024-01-01"), end or today),
+    }
+
+    dataset = data_loader.build_dataset(segments=segments, instruments=instruments)
+
+    if getattr(model, "factor_pipeline", None) is not None:
+        logger.info(
+            "模型含有 factor_pipeline，为 %s 重新计算额外因子 …",
+            instruments,
+        )
+        price_data = data_loader.load_price_data(
+            instruments=instruments,
+            start_time=tcfg.get("fit_start", "2015-01-01"),
+            end_time=end or today,
+        )
+        model.refresh_extra_factors(price_data)
+
+    pred = model.predict(dataset, segment="test")
+    if universe_filter.requires_price_data():
+        price_data = data_loader.load_price_data(
+            instruments=instruments,
+            start_time=start or tcfg.get("test_start", "2024-01-01"),
+            end_time=end or today,
+        )
+        pred = universe_filter.filter(pred, price_data=price_data)
+    else:
+        pred = universe_filter.filter(pred)
+
+    sector_map = sector_provider.get_map() if sector_provider is not None else None
+    return postprocess_signal(pred, config=config, sector_map=sector_map)
+
+
+def _signal_diagnostics_for_market(
+    data_loader: DataLoader,
+    pred,
+    config: dict,
+    instruments: str,
+    start: str = None,
+    end: str = None,
+    today: str = None,
+) -> dict:
+    diag_cfg = config.get("signal", {}).get("diagnostics", {})
+    if not diag_cfg.get("enabled", True):
+        return {}
+
+    tcfg = config.get("training", {})
+    today = today or datetime.now().strftime("%Y-%m-%d")
+    price_data = data_loader.load_price_data(
+        instruments=instruments,
+        start_time=start or tcfg.get("test_start", "2024-01-01"),
+        end_time=end or today,
+    )
+    return compute_signal_ic(
+        pred=pred,
+        price_data=price_data,
+        horizon=int(diag_cfg.get("horizon", 5)),
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="量化策略批量回测")
     parser.add_argument("--config",      type=str, default=None)
-    parser.add_argument("--model-path",  type=str, default=None,
-                        help="直接加载 .pkl 模型文件，例如 models/lgbm_baseline_20260308_143021.pkl")
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        default=None,
+        help="直接加载 .pkl 模型文件，例如 models/lgbm_baseline_20260308_143021.pkl",
+    )
     parser.add_argument("--topk",        type=str, default=None, help="e.g. 5,10,15")
     parser.add_argument("--n-drop",      type=str, default=None)
     parser.add_argument("--hold-thresh", type=str, default=None)
@@ -189,8 +323,17 @@ if __name__ == "__main__":
     parser.add_argument("--end",         type=str, default=None)
     parser.add_argument("--optimize",    action="store_true", help="使用 AI Agent 迭代优化")
     parser.add_argument("--n-iters",     type=int, default=3)
-    parser.add_argument("--seeds",       action="store_true",
-                        help="多 seed 评估：用 5 个内置 seed 跑每个参数组合并取平均，结果更稳健")
+    parser.add_argument(
+        "--seeds",
+        action="store_true",
+        help="多 seed 评估：用 5 个内置 seed 跑每个参数组合并取平均，结果更稳健",
+    )
+    parser.add_argument("--market",      type=str, default=None,
+                        help="单个回测候选池，例如 csi300 | csi500 | all")
+    parser.add_argument("--markets",     type=str, default=None,
+                        help="多个回测候选池，例如 csi300,csi500,csi1000,all")
+    parser.add_argument("--explore-markets", action="store_true",
+                        help="使用 config/base.yaml 中 market.candidates 批量探索候选池")
     args = parser.parse_args()
 
     main(
@@ -204,4 +347,7 @@ if __name__ == "__main__":
         optimize=args.optimize,
         n_iters=args.n_iters,
         multi_seed=args.seeds,
+        market=args.market,
+        markets=parse_strings(args.markets) if args.markets else None,
+        explore_markets=args.explore_markets,
     )

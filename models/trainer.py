@@ -150,6 +150,13 @@ class ModelTrainer:
                 "num_leaves":       lgb_cfg.get("num_leaves", 64),
                 "num_threads":      20,
                 "n_estimators":     lgb_cfg.get("n_estimators", 1000),
+                "seed":             lgb_cfg.get("seed", 42),
+                "feature_fraction_seed": lgb_cfg.get("feature_fraction_seed", 42),
+                "bagging_seed":     lgb_cfg.get("bagging_seed", 42),
+                "data_random_seed": lgb_cfg.get("data_random_seed", 42),
+                "extra_seed":       lgb_cfg.get("extra_seed", 42),
+                "deterministic":    lgb_cfg.get("deterministic", True),
+                "force_col_wise":   lgb_cfg.get("force_col_wise", True),
                 "verbose":          -1,
                 "early_stopping_rounds": lgb_cfg.get("early_stopping_rounds", 50),
                 "eval_set_key":     ["valid"],
@@ -228,6 +235,9 @@ class ModelTrainer:
 
         if model_name == "lgbm":
             base["lgbm_params"] = model_cfg.get("lightgbm", {})
+            ensemble_cfg = model_cfg.get("ensemble", {})
+            if ensemble_cfg.get("enabled", False):
+                base["ensemble_seeds"] = ensemble_cfg.get("seeds", [42, 123, 2024])
             if factor_pipeline is not None:
                 base["factor_pipeline"] = factor_pipeline
 

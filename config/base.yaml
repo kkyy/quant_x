@@ -4,12 +4,57 @@
 # ============================================================
 
 qlib:
-  provider_uri: "/Users/weidian/code/algorithms/investment_data/qlib_data/qlib_bin"
+  provider_uri: "./qlib_data/qlib_bin"
   region: "cn"
+
+data_update:
+  qlib_bin:
+    # 数据更新工作目录。
+    # 会在其中维护 dolt clone、qlib clone、qlib_source、qlib_normalize 等中间目录。
+    workspace_dir: "./qlib_data"
+    qlib_repo: "https://github.com/microsoft/qlib.git"
+    dolt_repo: "chenditc/investment_data"
+    mysql_url: "mysql+pymysql://root:@127.0.0.1/investment_data"
+    max_workers: 16
+    # 默认保持原始 dolt clone 行为；如需浅克隆，可运行时显式加 --shallow-dolt-clone。
+    clone_depth: 1
 
 market:
   name: "csi300"           # 股票池: csi300 | csi500 | all
+  candidates: ["csi300", "csi500", "csi800", "csi1000", "csiall", "all"]
   benchmark: "SH000300"    # 基准指数
+
+strategy:
+  topk_dropout:
+    topk: 10
+    n_drop: 3
+    hold_thresh: 5
+  universe_filter:
+    exclude_kcb: true
+    exclude_list: []
+    min_price: 3
+
+backtest:
+  account: 1000000
+  open_cost: 0.0005
+  close_cost: 0.0015
+  min_cost: 5
+  start_time: "2024-01-01"
+  # 给完全相同的模型分数加极小确定性扰动，减少选股排序漂移。
+  tie_breaker_epsilon: 1.0e-12
+
+signal:
+  postprocess:
+    enabled: true
+    # rank: 每日横截面分位数；zscore: 每日横截面标准分；none: 原始分数
+    daily_transform: "rank"
+    rank_pct: true
+    # 行业中性化会使用 SectorDataProvider；默认关闭，避免强制依赖行业缓存/网络。
+    industry_neutralize: false
+    min_group_size: 5
+  diagnostics:
+    enabled: true
+    horizon: 5
 
 training:
   fit_start:   "2015-01-01"

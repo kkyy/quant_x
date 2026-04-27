@@ -24,9 +24,22 @@ model:
     colsample_bytree: 0.8
     reg_alpha: 0.1
     reg_lambda: 0.1
+    seed: 42
+    feature_fraction_seed: 42
+    bagging_seed: 42
+    data_random_seed: 42
+    extra_seed: 42
+    deterministic: true
+    force_col_wise: true
     early_stopping_rounds: 50
     verbose: -1
     n_jobs: -1
+
+  # ── Multi-seed ensemble ─────────────────────────────────────
+  # 多 seed bagging 可以降低单次训练的随机性，但训练耗时会按 seed 数近似放大。
+  ensemble:
+    enabled: false
+    seeds: [42, 123, 2024]
 
   # ── XGBoost hyper-parameters ─────────────────────────────────
   xgboost:

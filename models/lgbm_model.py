@@ -7,6 +7,7 @@ Registered name: "lgbm"
 from __future__ import annotations
 
 import logging
+import random
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -28,6 +29,13 @@ _DEFAULT_PARAMS: Dict[str, Any] = {
     "reg_lambda": 0.1,
     "verbose": -1,
     "n_jobs": -1,
+    "seed": 42,
+    "feature_fraction_seed": 42,
+    "bagging_seed": 42,
+    "data_random_seed": 42,
+    "extra_seed": 42,
+    "deterministic": True,
+    "force_col_wise": True,
 }
 
 
@@ -55,15 +63,21 @@ class LGBMAlphaModel(BaseAlphaModel):
         extra_factors: Optional[pd.DataFrame] = None,
         categorical_features: Optional[List[str]] = None,
         factor_pipeline=None,
+        ensemble_seeds: Optional[List[int]] = None,
         # legacy params kept for backward compatibility
         sector_factors: Optional[pd.DataFrame] = None,
         custom_factors: Optional[pd.DataFrame] = None,
     ):
         self.lgbm_params = {**_DEFAULT_PARAMS, **(lgbm_params or {})}
+        seed = int(self.lgbm_params.get("seed", 42))
+        for key in ("feature_fraction_seed", "bagging_seed", "data_random_seed", "extra_seed"):
+            self.lgbm_params.setdefault(key, seed)
         self.categorical_features = categorical_features or ["sector_id"]
         self.model = None
+        self.models_: List[Any] = []
         self.feature_names_: Optional[List[str]] = None
         self.factor_pipeline = factor_pipeline
+        self.ensemble_seeds = ensemble_seeds or [seed]
 
         # Build unified extra_factors from all sources
         parts = [df for df in (extra_factors, sector_factors, custom_factors)
@@ -80,6 +94,10 @@ class LGBMAlphaModel(BaseAlphaModel):
 
     def fit(self, dataset, **kwargs) -> "LGBMAlphaModel":
         import lightgbm as lgb
+
+        seed = int(self.lgbm_params.get("seed", 42))
+        random.seed(seed)
+        np.random.seed(seed)
 
         df_tr = dataset.prepare("train", col_set=["feature", "label"], data_key="learn")
         df_va = dataset.prepare("valid", col_set=["feature", "label"], data_key="learn")
@@ -104,19 +122,39 @@ class LGBMAlphaModel(BaseAlphaModel):
                             categorical_feature=cat_feats or "auto",
                             reference=tr_ds, free_raw_data=False)
 
-        self.model = lgb.train(
-            params,
-            tr_ds,
-            num_boost_round=n_est,
-            valid_sets=[va_ds],
-            callbacks=[
-                lgb.early_stopping(early, verbose=False),
-                lgb.log_evaluation(100),
-            ],
-        )
+        self.models_ = []
+        for i, ensemble_seed in enumerate(self.ensemble_seeds, 1):
+            seed_params = {
+                **params,
+                "seed": ensemble_seed,
+                "feature_fraction_seed": ensemble_seed,
+                "bagging_seed": ensemble_seed,
+                "data_random_seed": ensemble_seed,
+                "extra_seed": ensemble_seed,
+            }
+            logger.info(
+                "Training LGBM ensemble member %s/%s seed=%s",
+                i,
+                len(self.ensemble_seeds),
+                ensemble_seed,
+            )
+            booster = lgb.train(
+                seed_params,
+                tr_ds,
+                num_boost_round=n_est,
+                valid_sets=[va_ds],
+                callbacks=[
+                    lgb.early_stopping(early, verbose=False),
+                    lgb.log_evaluation(100),
+                ],
+            )
+            self.models_.append(booster)
+
+        self.model = self.models_[0] if self.models_ else None
         logger.info(
-            f"LGBMAlphaModel trained: {self.model.num_trees()} trees, "
-            f"{len(self.feature_names_)} features"
+            "LGBMAlphaModel trained: %s model(s), %s features",
+            len(self.models_),
+            len(self.feature_names_),
         )
         return self
 
@@ -128,7 +166,10 @@ class LGBMAlphaModel(BaseAlphaModel):
             self._merge_extra(X, self.extra_factors)
             .reindex(columns=self.feature_names_, fill_value=np.nan)
         )
-        preds = self.model.predict(X)
+        models = self.models_ or ([self.model] if self.model is not None else [])
+        if not models:
+            raise RuntimeError("LGBMAlphaModel is not fitted")
+        preds = np.mean([m.predict(X) for m in models], axis=0)
         return pd.Series(preds, index=X.index, name="score")
 
     def refresh_extra_factors(self, price_data: pd.DataFrame) -> None:
@@ -156,6 +197,7 @@ class LGBMAlphaModel(BaseAlphaModel):
     def feature_importance(self, top_n: int = 30) -> pd.DataFrame:
         if self.model is None:
             return pd.DataFrame(columns=["feature", "importance"])
-        imp = self.model.feature_importance(importance_type="gain")
-        df = pd.DataFrame({"feature": self.model.feature_name(), "importance": imp})
+        models = self.models_ or [self.model]
+        imp = np.mean([m.feature_importance(importance_type="gain") for m in models], axis=0)
+        df = pd.DataFrame({"feature": models[0].feature_name(), "importance": imp})
         return df.sort_values("importance", ascending=False).head(top_n)

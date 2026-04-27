@@ -1,0 +1,521 @@
+"""Refresh qlib binary data from chenditc/investment_data via Dolt."""
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import pandas as pd
+
+from utils.config import load_config
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_WORKSPACE_DIR = PROJECT_ROOT / "qlib_data"
+DEFAULT_QLIB_DIR = DEFAULT_WORKSPACE_DIR / "qlib_bin"
+DEFAULT_QLIB_REPO = "https://github.com/microsoft/qlib.git"
+DEFAULT_DOLT_REPO = "chenditc/investment_data"
+DEFAULT_MYSQL_URL = "mysql+pymysql://root:@127.0.0.1/investment_data"
+INDEX_MAP = {
+    "csi300": "399300.SZ",
+    "csi500": "000905.SH",
+    "csi800": "000906.SH",
+    "csi1000": "000852.SH",
+    "csiall": "000985.SH",
+}
+
+
+@dataclass
+class UpdatePaths:
+    workspace_dir: Path
+    qlib_dir: Path
+    qlib_repo_dir: Path
+    dolt_parent_dir: Path
+    dolt_repo_dir: Path
+    source_dir: Path
+    normalize_dir: Path
+    index_dir: Path
+    tarball_path: Path
+
+
+@dataclass
+class UpdateOptions:
+    qlib_repo: str
+    dolt_repo: str
+    mysql_url: str
+    max_workers: int
+    shallow_dolt_clone: bool
+    clone_depth: int
+    skip_exists: bool
+    install_dolt: bool
+    create_tarball: bool
+    repair_dolt_clone: bool
+    output_dir: Optional[Path]
+    python: str
+
+
+def resolve_path(path: str, base: Path = PROJECT_ROOT) -> Path:
+    p = Path(path).expanduser()
+    if not p.is_absolute():
+        p = base / p
+    return p.resolve()
+
+
+def build_paths(config: Dict[str, Any], args: argparse.Namespace) -> UpdatePaths:
+    update_config = config.get("data_update", {}).get("qlib_bin", {})
+    qlib_dir = resolve_path(
+        args.qlib_dir
+        or update_config.get("qlib_dir")
+        or config.get("qlib", {}).get("provider_uri")
+        or str(DEFAULT_QLIB_DIR)
+    )
+    workspace_dir = resolve_path(
+        args.workspace_dir
+        or update_config.get("workspace_dir")
+        or str(DEFAULT_WORKSPACE_DIR)
+    )
+
+    source_dir = resolve_path(
+        update_config.get("source_dir", str(workspace_dir / "qlib_source")), workspace_dir
+    )
+    normalize_dir = resolve_path(
+        update_config.get("normalize_dir", str(workspace_dir / "qlib_normalize")), workspace_dir
+    )
+    index_dir = resolve_path(
+        update_config.get("index_dir", str(workspace_dir / "qlib_index")), workspace_dir
+    )
+    qlib_repo_dir = resolve_path(
+        update_config.get("qlib_repo_dir", str(workspace_dir / "qlib")), workspace_dir
+    )
+    dolt_parent_dir = resolve_path(
+        update_config.get("dolt_parent_dir", str(workspace_dir / "dolt")), workspace_dir
+    )
+    dolt_repo_dir = resolve_path(
+        update_config.get("dolt_repo_dir", str(dolt_parent_dir / "investment_data")),
+        workspace_dir,
+    )
+    tarball_path = resolve_path(
+        update_config.get("tarball_path", str(workspace_dir / "qlib_bin.tar.gz")),
+        workspace_dir,
+    )
+
+    return UpdatePaths(
+        workspace_dir=workspace_dir,
+        qlib_dir=qlib_dir,
+        qlib_repo_dir=qlib_repo_dir,
+        dolt_parent_dir=dolt_parent_dir,
+        dolt_repo_dir=dolt_repo_dir,
+        source_dir=source_dir,
+        normalize_dir=normalize_dir,
+        index_dir=index_dir,
+        tarball_path=tarball_path,
+    )
+
+
+def build_options(config: Dict[str, Any], args: argparse.Namespace) -> UpdateOptions:
+    update_config = config.get("data_update", {}).get("qlib_bin", {})
+    output_dir = args.output_dir or os.environ.get("OUTPUT_DIR") or update_config.get("output_dir")
+    return UpdateOptions(
+        qlib_repo=args.qlib_repo or update_config.get("qlib_repo", DEFAULT_QLIB_REPO),
+        dolt_repo=args.dolt_repo or update_config.get("dolt_repo", DEFAULT_DOLT_REPO),
+        mysql_url=args.mysql_url or update_config.get("mysql_url", DEFAULT_MYSQL_URL),
+        max_workers=args.max_workers or int(update_config.get("max_workers", 16)),
+        shallow_dolt_clone=args.shallow_dolt_clone,
+        clone_depth=args.clone_depth or int(update_config.get("clone_depth", 1)),
+        skip_exists=args.skip_exists,
+        install_dolt=args.install_dolt,
+        create_tarball=not args.no_tarball,
+        repair_dolt_clone=args.repair_dolt_clone,
+        output_dir=resolve_path(output_dir) if output_dir else None,
+        python=args.python or sys.executable,
+    )
+
+
+def run(
+    command: list[str],
+    cwd: Optional[Path] = None,
+    env: Optional[dict[str, str]] = None,
+) -> None:
+    print("+", " ".join(command))
+    subprocess.run(command, cwd=str(cwd) if cwd else None, env=env, check=True)
+
+
+def command_ok(command: list[str], cwd: Path) -> bool:
+    result = subprocess.run(
+        command,
+        cwd=str(cwd),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def ensure_command(command: str, install_dolt: bool = False) -> None:
+    if shutil.which(command):
+        return
+    if command == "dolt" and install_dolt:
+        install_script_url = "https://github.com/dolthub/dolt/releases/latest/download/install.sh"
+        run(["bash", "-c", f"curl -L {install_script_url} | bash"])
+        if shutil.which(command):
+            return
+    raise RuntimeError(
+        f"Required command not found: {command}. Install it first, or pass --install-dolt for dolt."
+    )
+
+
+def ensure_repositories(paths: UpdatePaths, options: UpdateOptions) -> None:
+    ensure_command("git")
+    ensure_command("dolt", install_dolt=options.install_dolt)
+
+    paths.workspace_dir.mkdir(parents=True, exist_ok=True)
+    paths.dolt_parent_dir.mkdir(parents=True, exist_ok=True)
+
+    ensure_dolt_repository(paths, options)
+    ensure_git_repository(paths.qlib_repo_dir, options.qlib_repo)
+
+
+def ensure_dolt_repository(paths: UpdatePaths, options: UpdateOptions) -> None:
+    if paths.dolt_repo_dir.exists():
+        if is_valid_dolt_repository(paths.dolt_repo_dir):
+            return
+        message = (
+            f"Found an incomplete Dolt repository at {paths.dolt_repo_dir}. "
+            "This usually happens when the first `dolt clone` is interrupted. "
+            "Dolt can pull incrementally after a complete clone, but this partial "
+            "initial clone cannot be resumed reliably."
+        )
+        if not options.repair_dolt_clone:
+            raise RuntimeError(
+                message
+                + " Re-run with --repair-dolt-clone to move it aside and start "
+                "a new clone."
+            )
+        backup = paths.dolt_repo_dir.with_name(
+            f"{paths.dolt_repo_dir.name}.partial.{time.strftime('%Y%m%d_%H%M%S')}"
+        )
+        print(f"{message} Moving partial clone to {backup}")
+        shutil.move(str(paths.dolt_repo_dir), str(backup))
+
+    clone_cmd = ["dolt", "clone"]
+    if options.shallow_dolt_clone:
+        clone_cmd.append("--single-branch")
+    if options.shallow_dolt_clone and options.clone_depth > 0:
+        clone_cmd.extend(["--depth", str(options.clone_depth)])
+    clone_cmd.extend([options.dolt_repo, str(paths.dolt_repo_dir)])
+    run(clone_cmd, cwd=paths.dolt_parent_dir)
+
+
+def is_valid_dolt_repository(path: Path) -> bool:
+    return (path / ".dolt").exists() and command_ok(["dolt", "status"], cwd=path)
+
+
+def ensure_git_repository(path: Path, repo_url: str) -> None:
+    if path.exists() and command_ok(["git", "rev-parse", "--is-inside-work-tree"], cwd=path):
+        return
+    if path.exists():
+        backup = path.with_name(f"{path.name}.partial.{time.strftime('%Y%m%d_%H%M%S')}")
+        print(f"Found incomplete git repository at {path}. Moving it to {backup}")
+        shutil.move(str(path), str(backup))
+    if not path.exists():
+        run(["git", "clone", repo_url, str(path)])
+
+
+def wait_for_database(mysql_url: str, timeout_seconds: int = 30) -> None:
+    from sqlalchemy import create_engine, text
+
+    deadline = time.time() + timeout_seconds
+    last_error: Optional[Exception] = None
+    while time.time() < deadline:
+        try:
+            engine = create_engine(mysql_url, pool_recycle=3600)
+            with engine.connect() as conn:
+                conn.execute(text("select 1"))
+            engine.dispose()
+            return
+        except Exception as exc:  # pragma: no cover - depends on local Dolt server
+            last_error = exc
+            time.sleep(1)
+    raise RuntimeError(f"Dolt SQL server did not become ready: {last_error}")
+
+
+def start_dolt_server(paths: UpdatePaths, options: UpdateOptions) -> subprocess.Popen[str]:
+    run(["dolt", "pull", "origin"], cwd=paths.dolt_repo_dir)
+    process = subprocess.Popen(
+        ["dolt", "sql-server"],
+        cwd=str(paths.dolt_repo_dir),
+        text=True,
+    )
+    wait_for_database(options.mysql_url)
+    return process
+
+
+def open_db(mysql_url: str):
+    from sqlalchemy import create_engine
+
+    engine = create_engine(mysql_url, pool_recycle=3600)
+    return engine, engine.raw_connection()
+
+
+def dump_stock_source(paths: UpdatePaths, options: UpdateOptions) -> None:
+    paths.source_dir.mkdir(parents=True, exist_ok=True)
+    engine, connection = open_db(options.mysql_url)
+    try:
+        stock_df = pd.read_sql(
+            "select *, amount/volume*10 as vwap from final_a_stock_eod_price",
+            connection,
+        )
+    finally:
+        connection.close()
+        engine.dispose()
+
+    for symbol, df in stock_df.groupby("symbol"):
+        filename = paths.source_dir / f"{symbol}.csv"
+        if options.skip_exists and filename.exists():
+            continue
+        print("Dumping to file:", filename)
+        df.to_csv(filename, index=False)
+
+
+def dump_index_weight(paths: UpdatePaths, options: UpdateOptions) -> None:
+    paths.index_dir.mkdir(parents=True, exist_ok=True)
+    engine, connection = open_db(options.mysql_url)
+    try:
+        for index_name, index_code in INDEX_MAP.items():
+            filename = paths.index_dir / f"{index_name}.txt"
+            if options.skip_exists and filename.exists():
+                continue
+
+            print("Dumping to file:", filename)
+            change_date_sql = f"""
+                select min(trade_date) as change_date from
+                (
+                    select trade_date, MD5(GROUP_CONCAT(stock_code)) as signature
+                    from ts_index_weight
+                    where index_code = '{index_code}'
+                    group by trade_date
+                ) date_sig_table
+                group by signature
+                order by change_date
+            """
+            change_dates = pd.read_sql_query(change_date_sql, connection)["change_date"]
+            result_frames = []
+            for i, change_date in enumerate(change_dates):
+                start_date = change_date.strftime("%Y-%m-%d")
+                if i == len(change_dates) - 1:
+                    end_date = pd.Timestamp.today().strftime("%Y-%m-%d")
+                else:
+                    end_date = (change_dates[i + 1] - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+
+                sql = (
+                    "select concat(substr(stock_code, 8, 2), substr(stock_code, 1, 6)), "
+                    f"'{start_date}' as start_date, '{end_date}' as end_date "
+                    "from ts_index_weight "
+                    f"where index_code = '{index_code}' and trade_date = '{start_date}'"
+                )
+                stock_df = pd.read_sql_query(sql, connection)
+                if stock_df.empty:
+                    raise RuntimeError(f"No data for SQL: {sql}")
+                result_frames.append(stock_df)
+
+            if result_frames:
+                pd.concat(result_frames).to_csv(filename, index=False, header=False, sep="\t")
+    finally:
+        connection.close()
+        engine.dispose()
+
+
+def dump_calendar(paths: UpdatePaths, options: UpdateOptions) -> None:
+    old_days_file = paths.qlib_dir / "calendars/day.txt"
+    if not old_days_file.exists():
+        raise FileNotFoundError(f"Cannot find existing qlib day calendar: {old_days_file}")
+
+    old_calendar_df = pd.read_csv(old_days_file, header=None)
+    min_date = pd.to_datetime(old_calendar_df.iloc[0][0])
+
+    engine, connection = open_db(options.mysql_url)
+    try:
+        sql = "select date from ts_trade_day_calendar where exchange = 'SSE' and is_open = 1"
+        calendar_df = pd.read_sql(sql, connection)
+    finally:
+        connection.close()
+        engine.dispose()
+
+    calendar_df["date"] = pd.to_datetime(calendar_df["date"])
+    calendar_df.drop(calendar_df[calendar_df["date"] < min_date].index, inplace=True)
+
+    filename = paths.qlib_dir / "calendars/day_future.txt"
+    print("Dumping to file:", filename)
+    calendar_df.to_csv(filename, index=False, header=False, sep="\t")
+
+
+def qlib_scripts_env(paths: UpdatePaths) -> dict[str, str]:
+    env = os.environ.copy()
+    scripts_path = str(paths.qlib_repo_dir / "scripts")
+    env["PYTHONPATH"] = scripts_path + os.pathsep + env.get("PYTHONPATH", "")
+    return env
+
+
+def normalize_source(paths: UpdatePaths, options: UpdateOptions) -> None:
+    paths.normalize_dir.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            options.python,
+            "-m",
+            "data.qlib_update.normalize",
+            "--source-dir",
+            str(paths.source_dir),
+            "--normalize-dir",
+            str(paths.normalize_dir),
+            "--max-workers",
+            str(options.max_workers),
+            "--date-field-name",
+            "tradedate",
+        ],
+        cwd=PROJECT_ROOT,
+        env=qlib_scripts_env(paths),
+    )
+
+
+def dump_bin(paths: UpdatePaths, options: UpdateOptions) -> None:
+    dump_bin_script = paths.qlib_repo_dir / "scripts/dump_bin.py"
+    if not dump_bin_script.exists():
+        raise FileNotFoundError(f"Cannot find qlib dump_bin.py: {dump_bin_script}")
+    run(
+        [
+            options.python,
+            str(dump_bin_script),
+            "dump_all",
+            "--data_path",
+            str(paths.normalize_dir),
+            "--qlib_dir",
+            str(paths.qlib_dir),
+            "--date_field_name",
+            "tradedate",
+            "--exclude_fields",
+            "tradedate,symbol",
+        ],
+        env=qlib_scripts_env(paths),
+    )
+
+
+def copy_index_files(paths: UpdatePaths) -> None:
+    instruments_dir = paths.qlib_dir / "instruments"
+    instruments_dir.mkdir(parents=True, exist_ok=True)
+    for index_file in paths.index_dir.glob("csi*.txt"):
+        target = instruments_dir / index_file.name
+        print(f"Copying {index_file} -> {target}")
+        shutil.copy2(index_file, target)
+
+
+def create_tarball(paths: UpdatePaths, options: UpdateOptions) -> None:
+    paths.tarball_path.parent.mkdir(parents=True, exist_ok=True)
+    if paths.tarball_path.exists():
+        paths.tarball_path.unlink()
+
+    print("Creating tarball:", paths.tarball_path)
+    with tarfile.open(paths.tarball_path, "w:gz") as tar:
+        tar.add(paths.qlib_dir, arcname=paths.qlib_dir.name)
+
+    if options.output_dir and options.output_dir.exists():
+        target = options.output_dir / paths.tarball_path.name
+        shutil.move(str(paths.tarball_path), target)
+        print("Moved tarball to:", target)
+    else:
+        print("Generated tarball at:", paths.tarball_path)
+
+
+def stop_dolt_server(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def refresh_qlib_bin(paths: UpdatePaths, options: UpdateOptions) -> None:
+    ensure_repositories(paths, options)
+    dolt_process = start_dolt_server(paths, options)
+    try:
+        dump_stock_source(paths, options)
+        normalize_source(paths, options)
+        dump_bin(paths, options)
+        dump_index_weight(paths, options)
+        dump_calendar(paths, options)
+        copy_index_files(paths)
+        if options.create_tarball:
+            create_tarball(paths, options)
+    finally:
+        stop_dolt_server(dolt_process)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", help="Optional YAML config override.")
+    parser.add_argument(
+        "--qlib-dir",
+        default=None,
+        help=f"Target qlib_bin directory. Default: {DEFAULT_QLIB_DIR}.",
+    )
+    parser.add_argument(
+        "--workspace-dir",
+        default=None,
+        help=(
+            "Working directory for Dolt, qlib clone and temp files. "
+            f"Default: {DEFAULT_WORKSPACE_DIR}."
+        ),
+    )
+    parser.add_argument("--qlib-repo", help=f"qlib git repository. Default: {DEFAULT_QLIB_REPO}")
+    parser.add_argument("--dolt-repo", help=f"Dolt repository. Default: {DEFAULT_DOLT_REPO}")
+    parser.add_argument("--mysql-url", help=f"Dolt SQL URL. Default: {DEFAULT_MYSQL_URL}")
+    parser.add_argument("--max-workers", type=int, help="Normalize worker count.")
+    parser.add_argument(
+        "--shallow-dolt-clone",
+        action="store_true",
+        help="Use `dolt clone --single-branch --depth N` for the first clone.",
+    )
+    parser.add_argument(
+        "--clone-depth",
+        type=int,
+        help="Depth used only with --shallow-dolt-clone. Default: config value, usually 1.",
+    )
+    parser.add_argument("--python", help="Python executable used for qlib helper scripts.")
+    parser.add_argument("--output-dir", help="Directory to receive qlib_bin.tar.gz if it exists.")
+    parser.add_argument(
+        "--skip-exists",
+        action="store_true",
+        help="Skip existing CSV/index outputs.",
+    )
+    parser.add_argument(
+        "--install-dolt",
+        action="store_true",
+        help="Install dolt if the command is missing.",
+    )
+    parser.add_argument(
+        "--repair-dolt-clone",
+        action="store_true",
+        help="Move an incomplete first Dolt clone aside and start a new clone.",
+    )
+    parser.add_argument("--no-tarball", action="store_true", help="Do not create qlib_bin.tar.gz.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    paths = build_paths(config, args)
+    options = build_options(config, args)
+    refresh_qlib_bin(paths, options)
+
+
+if __name__ == "__main__":
+    main()

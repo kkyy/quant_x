@@ -1,5 +1,6 @@
 """Backtest execution engine wrapping qlib's backtest_daily."""
 from __future__ import annotations
+import hashlib
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
@@ -7,6 +8,47 @@ from typing import Any, Dict, Optional, Tuple
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+def stabilize_signal(
+    pred: pd.Series,
+    tie_breaker_epsilon: float = 1e-12,
+) -> pd.Series:
+    """Return prediction signal in deterministic order with stable tie breaks."""
+    if pred is None or pred.empty:
+        return pred
+
+    signal = pred.dropna().copy()
+    if not isinstance(signal.index, pd.MultiIndex):
+        return signal.sort_index(kind="mergesort")
+
+    names = list(signal.index.names)
+    if "datetime" in names and "instrument" in names:
+        datetime_level = names.index("datetime")
+        instrument_level = names.index("instrument")
+        frame = signal.rename("score").reset_index()
+        frame["_instrument_key"] = frame["instrument"].astype(str)
+        frame = frame.sort_values(
+            ["datetime", "_instrument_key"],
+            kind="mergesort",
+        )
+        if tie_breaker_epsilon and tie_breaker_epsilon > 0:
+            offsets = frame["_instrument_key"].map(_stable_offset)
+            frame["score"] = frame["score"].astype(float) + offsets * tie_breaker_epsilon
+        frame = frame.drop(columns=["_instrument_key"])
+        signal = frame.set_index(names)["score"]
+        return signal.reorder_levels(names).sort_index(
+            level=[datetime_level, instrument_level],
+            kind="mergesort",
+        )
+
+    return signal.sort_index(kind="mergesort")
+
+
+def _stable_offset(value: str) -> float:
+    digest = hashlib.blake2b(value.encode("utf-8"), digest_size=8).digest()
+    integer = int.from_bytes(digest, "big")
+    return integer / ((1 << 64) - 1) - 0.5
 
 
 class BacktestEngine:
@@ -60,9 +102,13 @@ class BacktestEngine:
 
         sp = strategy_params or {}
         strat_cfg = self.config.get("strategy", {}).get("topk_dropout", {})
+        bt_cfg = self.config.get("backtest", {})
         topk       = sp.get("topk",       strat_cfg.get("topk",       10))
         n_drop     = sp.get("n_drop",     strat_cfg.get("n_drop",     3))
         hold_thresh = sp.get("hold_thresh", strat_cfg.get("hold_thresh", 5))
+        tie_breaker_epsilon = bt_cfg.get("tie_breaker_epsilon", 1e-12)
+
+        pred = stabilize_signal(pred, tie_breaker_epsilon=tie_breaker_epsilon)
 
         import random, numpy as np
         random.seed(seed)

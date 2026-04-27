@@ -86,11 +86,19 @@ pip install -e .
 
 ### 2. 准备数据
 
-需要本地 qlib 数据（A 股日频数据），推荐使用 qlib 官方工具下载：
+需要本地 qlib 数据（A 股日频数据）。可以先使用 qlib 官方工具下载：
 
 ```bash
 python -m qlib.run.get_data qlib_data --target_dir ~/qlib_data/cn_data --region cn
 ```
+
+本项目也内置了从 `chenditc/investment_data` Dolt 数据库刷新 qlib bin 的入口，用于替代旧的外部 `dump_qlib_bin.sh`：
+
+```bash
+python run_update_qlib_data.py
+```
+
+默认读取 `config/base.yaml` 的 `qlib.provider_uri` 和 `data_update.qlib_bin`。该命令会维护 Dolt 仓库、qlib 工具仓库和中间 CSV/normalize 目录，并写入目标 `qlib_bin`。如果本机还没有 `dolt`，先手动安装，或显式加 `--install-dolt`。
 
 ### 3. 编辑配置
 
@@ -279,11 +287,48 @@ python run_backtest.py --start 2024-01-01 --end 2025-12-31
 # 多 seed 稳健评估：用 5 个内置 seed 跑每组参数并取均值（每个 seed 在独立子进程中运行以隔离 PYTHONHASHSEED）
 python run_backtest.py --seeds
 
+# 探索不同回测候选池
+python run_backtest.py --market csi500
+python run_backtest.py --markets csi300,csi500,csi1000,all --seeds
+python run_backtest.py --explore-markets
+
 # 启用 Claude AI 自动优化（需配置 ANTHROPIC_API_KEY）
 python run_backtest.py --optimize --n-iters 3
 ```
 
 结果保存到 `backtest_results/` 目录（CSV + JSON）。
+结果表会附带信号诊断列：`ic`、`icir`、`rank_ic`、`rank_icir`、`ic_days`。
+
+预测信号默认会先做每日横截面 rank，再送入 TopK 回测。可在 `config/base.yaml`
+的 `signal.postprocess` 中切换为 `zscore`、关闭后处理，或启用行业中性化。
+
+如需降低模型训练随机性，可在 `config/model.yaml` 中打开：
+
+```yaml
+model:
+  ensemble:
+    enabled: true
+    seeds: [42, 123, 2024]
+```
+
+---
+
+### run_update_qlib_data.py — 更新 qlib 日频数据
+
+```bash
+python run_update_qlib_data.py
+python run_update_qlib_data.py --no-tarball
+python run_update_qlib_data.py --workspace-dir /path/to/qlib_data
+python run_update_qlib_data.py --qlib-dir /path/to/qlib_data/qlib_bin
+```
+
+该入口迁移自旧的 `dump_qlib_bin.sh`，但路径不再依赖脚本所在目录：
+
+- `qlib.provider_uri`：最终写入的 qlib bin 目录
+- `data_update.qlib_bin.workspace_dir`：Dolt clone、qlib clone、`qlib_source`、`qlib_normalize` 等中间目录
+- `data_update.qlib_bin.mysql_url`：本地 Dolt SQL server 连接串
+
+脚本只会关闭自己启动的 Dolt SQL server 进程，不会执行全局 `killall dolt`。
 
 ---
 
@@ -303,6 +348,7 @@ python run_factor_mining.py --min-ic 0.03 --min-icir 0.4 --top-n 30
 | 模块 | 文件 | 功能 |
 |------|------|------|
 | 数据加载 | `data/loader.py` | 封装 qlib D.features，构建 DatasetH |
+| 数据更新 | `data/qlib_update/` | Dolt → CSV → qlib bin 的日频数据刷新流程 |
 | 股票池过滤 | `data/universe.py` | 排除科创板 / 黑名单 / 最低价格 |
 | 行业数据 | `data/sector.py` | akshare 行业映射，7 天 TTL 缓存 |
 | 行业因子 | `features/sector_factors.py` | 19 个行业轮动因子 |
@@ -480,6 +526,7 @@ quant_ex/
 │   └── notify.yaml        # 本地复制生成的通知凭证（可选，不入库）
 ├── data/
 │   ├── loader.py          # qlib 数据加载封装
+│   ├── qlib_update/       # Dolt → qlib bin 数据更新逻辑
 │   ├── universe.py        # 股票池过滤
 │   └── sector.py          # 行业映射（akshare + 缓存）
 ├── features/
@@ -511,6 +558,7 @@ quant_ex/
 ├── run_train.py           # 入口：模型训练
 ├── run_daily.py           # 入口：每日信号
 ├── run_backtest.py        # 入口：回测 & 网格搜索
+├── run_update_qlib_data.py# 入口：刷新 qlib bin 数据
 ├── run_factor_mining.py   # 入口：因子挖掘
 ├── requirements.txt
 └── README.md

@@ -96,6 +96,18 @@ qlib_workflow/
 # ============================================================
 data/raw/
 data/processed/
+qlib_data/
+qlib_data/dolt/
+qlib_data/qlib/
+qlib_data/qlib_bin/
+qlib_data/qlib_source/
+qlib_data/qlib_normalize/
+qlib_data/qlib_index/
+qlib_data/*.tar.gz
+qlib_source/
+qlib_normalize/
+qlib_index/
+qlib_bin.tar.gz*
 *.h5
 *.hdf5
 *.parquet

@@ -32,6 +32,14 @@ class NotificationPusher:
 
     def __init__(self, config: dict):
         self.cfg = config.get("notify", {})
+        # notify.yaml is commonly merged at top level in this project. Support
+        # both shapes: notify.wechat_mp and top-level wechat_mp/bark/etc.
+        if not self.cfg:
+            self.cfg = {
+                key: config.get(key, {})
+                for key in ("bark", "pushplus", "dingtalk", "serverchan", "wechat_mp")
+                if key in config
+            }
         # in-memory cache for WeChat access_token: {appid: (token, expires_at)}
         self._wx_token_cache: Dict[str, Tuple[str, float]] = {}
 
@@ -108,7 +116,7 @@ class NotificationPusher:
             # PushPlus renders markdown; replace newlines for better display
             md = content.replace("\n", "\n\n")
             r = requests.post(
-                "http://www.pushplus.plus/send",
+                "https://www.pushplus.plus/send",
                 json={"token": token, "title": title, "content": md, "template": "markdown"},
                 timeout=_TIMEOUT,
             )

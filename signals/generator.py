@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from .postprocess import postprocess_signal
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +76,9 @@ class SignalGenerator:
                 pred = self.universe_filter.filter(pred, price_data=price_data)
             else:
                 pred = self.universe_filter.filter(pred)
+
+        sector_map = self.sector_provider.get_map() if self.sector_provider is not None else None
+        pred = postprocess_signal(pred, config=self.config, sector_map=sector_map)
 
         latest_dt = pred.index.get_level_values("datetime").max()
         latest_pred = pred.xs(latest_dt, level="datetime")

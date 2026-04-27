@@ -26,8 +26,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+if os.environ.get("PYTHONHASHSEED") != "42":
+    os.environ["PYTHONHASHSEED"] = "42"
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
