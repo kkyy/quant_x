@@ -89,6 +89,7 @@ def main(
     market: str = None,
     markets: list = None,
     explore_markets: bool = False,
+    grid_workers: int = -1,
 ):
     config = load_config(config_path)
     today = datetime.now().strftime("%Y-%m-%d")
@@ -180,6 +181,7 @@ def main(
                 start_time=start,
                 end_time=end,
                 multi_seed=multi_seed,
+                n_jobs=grid_workers,
             )
             diagnostics = _signal_diagnostics_for_market(
                 data_loader=data_loader,
@@ -334,6 +336,12 @@ if __name__ == "__main__":
                         help="多个回测候选池，例如 csi300,csi500,csi1000,all")
     parser.add_argument("--explore-markets", action="store_true",
                         help="使用 config/base.yaml 中 market.candidates 批量探索候选池")
+    parser.add_argument(
+        "--grid-workers",
+        type=int,
+        default=-1,
+        help="网格搜索并行进程数，-1 表示使用全部 CPU 核心，1 表示串行（默认: -1）",
+    )
     args = parser.parse_args()
 
     main(
@@ -350,4 +358,5 @@ if __name__ == "__main__":
         market=args.market,
         markets=parse_strings(args.markets) if args.markets else None,
         explore_markets=args.explore_markets,
+        grid_workers=args.grid_workers,
     )

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Ensure all models and factors are registered by importing them
 import importlib as _il
-for _m in ("lgbm_model", "linear_model", "xgb_model"):
+for _m in ("lgbm_model", "linear_model", "xgb_model", "nn_model"):
     _il.import_module(f".{_m}", package=__name__.rsplit(".", 1)[0])
 for _f in ("sector_factors", "technical_factors", "factor_mining"):
     _il.import_module(f"..features.{_f}", package=__name__.rsplit(".", 1)[0])
@@ -243,6 +243,9 @@ class ModelTrainer:
 
         elif model_name == "xgb":
             base["xgb_params"] = model_cfg.get("xgboost", {})
+
+        elif model_name == "mlp":
+            base["mlp_params"] = model_cfg.get("mlp", {})
 
         elif model_name in ("ridge", "lasso"):
             linear_cfg = model_cfg.get("linear", {})

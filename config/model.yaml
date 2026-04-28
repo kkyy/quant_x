@@ -33,7 +33,24 @@ model:
     force_col_wise: true
     early_stopping_rounds: 50
     verbose: -1
-    n_jobs: -1
+    # num_threads: -1 uses all logical cores (Apple M3 has 8).
+    # When running parallel grid-search workers (--grid-workers N) or
+    # walk-forward (--workers N), consider setting num_threads to
+    # total_cores / N so workers don't compete, e.g. num_threads: 4.
+    num_threads: -1
+    # ── GPU acceleration (Phase 2) ────────────────────────────────────────────
+    # device_type: "cpu"  ← default; numpy already uses Apple Accelerate (AMX).
+    #
+    # To enable M3 GPU via OpenCL/Metal:
+    #   brew install opencl-headers ocl-icd
+    #   git clone --recursive https://github.com/microsoft/LightGBM
+    #   cd LightGBM && mkdir build && cd build
+    #   cmake .. -DUSE_GPU=1 \
+    #     -DOpenCL_LIBRARY=/System/Library/Frameworks/OpenCL.framework/OpenCL
+    #   make -j$(sysctl -n hw.physicalcpu)
+    #   cd ../python-package && pip install -e .  --force-reinstall
+    #   Then change device_type to "gpu" below.
+    device_type: "cpu"
 
   # ── Multi-seed ensemble ─────────────────────────────────────
   # 多 seed bagging 可以降低单次训练的随机性，但训练耗时会按 seed 数近似放大。
@@ -59,6 +76,22 @@ model:
   # ── Linear model hyper-parameters ────────────────────────────
   linear:
     alpha: 1.0     # used for both ridge and lasso
+
+  # ── MLP (neural network) hyper-parameters ─────────────────────
+  # Requires: pip install torch
+  # On Apple M3, automatically uses MPS (Metal GPU) when available.
+  # Usage: python run_train.py --model mlp --tag mlp_baseline
+  mlp:
+    hidden_dims: [256, 128, 64]
+    dropout: 0.2
+    batch_norm: true
+    lr: 0.001
+    weight_decay: 0.0001
+    batch_size: 2048
+    max_epochs: 100
+    patience: 10
+    seed: 42
+    device: "auto"   # "auto" → mps > cuda > cpu; or "cpu" / "mps" / "cuda"
 
   # ── Factor pipeline ──────────────────────────────────────────
   # 定义哪些额外因子供应商参与训练特征构建。

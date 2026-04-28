@@ -28,7 +28,11 @@ _DEFAULT_PARAMS: Dict[str, Any] = {
     "reg_alpha": 0.1,
     "reg_lambda": 0.1,
     "verbose": -1,
-    "n_jobs": -1,
+    # num_threads: -1 lets LightGBM use all logical cores via its own thread pool.
+    # Use lgb.train() native param name; n_jobs is a sklearn alias and may be
+    # silently ignored when calling lgb.train() directly.
+    "num_threads": -1,
+    "device_type": "cpu",  # change to "gpu" after building LightGBM with -DUSE_GPU=1
     "seed": 42,
     "feature_fraction_seed": 42,
     "bagging_seed": 42,
@@ -166,11 +170,34 @@ class LGBMAlphaModel(BaseAlphaModel):
             self._merge_extra(X, self.extra_factors)
             .reindex(columns=self.feature_names_, fill_value=np.nan)
         )
-        models = self.models_ or ([self.model] if self.model is not None else [])
+        models = self._prediction_models()
         if not models:
             raise RuntimeError("LGBMAlphaModel is not fitted")
         preds = np.mean([m.predict(X) for m in models], axis=0)
         return pd.Series(preds, index=X.index, name="score")
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Keep older pickled LGBMAlphaModel objects usable after schema changes."""
+        self.__dict__.update(state)
+        self._ensure_runtime_defaults()
+
+    def _ensure_runtime_defaults(self) -> None:
+        seed = int(getattr(self, "lgbm_params", {}).get("seed", 42))
+        if not hasattr(self, "models_"):
+            self.models_ = []
+        if not hasattr(self, "ensemble_seeds"):
+            self.ensemble_seeds = [seed]
+        if not hasattr(self, "categorical_features"):
+            self.categorical_features = ["sector_id"]
+        if not hasattr(self, "factor_pipeline"):
+            self.factor_pipeline = None
+        if not hasattr(self, "extra_factors"):
+            self.extra_factors = None
+
+    def _prediction_models(self) -> List[Any]:
+        self._ensure_runtime_defaults()
+        models = self.models_ or ([self.model] if self.model is not None else [])
+        return [model for model in models if model is not None]
 
     def refresh_extra_factors(self, price_data: pd.DataFrame) -> None:
         """Recompute extra_factors using the stored pipeline and fresh price data.
@@ -197,7 +224,7 @@ class LGBMAlphaModel(BaseAlphaModel):
     def feature_importance(self, top_n: int = 30) -> pd.DataFrame:
         if self.model is None:
             return pd.DataFrame(columns=["feature", "importance"])
-        models = self.models_ or [self.model]
+        models = self._prediction_models()
         imp = np.mean([m.feature_importance(importance_type="gain") for m in models], axis=0)
         df = pd.DataFrame({"feature": models[0].feature_name(), "importance": imp})
         return df.sort_values("importance", ascending=False).head(top_n)

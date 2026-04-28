@@ -53,6 +53,8 @@ class UpdateOptions:
     shallow_dolt_clone: bool
     clone_depth: int
     skip_exists: bool
+    skip_dolt_pull: bool
+    reuse_dolt_server: bool
     install_dolt: bool
     create_tarball: bool
     repair_dolt_clone: bool
@@ -129,6 +131,8 @@ def build_options(config: Dict[str, Any], args: argparse.Namespace) -> UpdateOpt
         shallow_dolt_clone=args.shallow_dolt_clone,
         clone_depth=args.clone_depth or int(update_config.get("clone_depth", 1)),
         skip_exists=args.skip_exists,
+        skip_dolt_pull=args.skip_dolt_pull,
+        reuse_dolt_server=args.reuse_dolt_server,
         install_dolt=args.install_dolt,
         create_tarball=not args.no_tarball,
         repair_dolt_clone=args.repair_dolt_clone,
@@ -183,6 +187,10 @@ def ensure_repositories(paths: UpdatePaths, options: UpdateOptions) -> None:
 
 def ensure_dolt_repository(paths: UpdatePaths, options: UpdateOptions) -> None:
     if paths.dolt_repo_dir.exists():
+        if is_dolt_repository_locked(paths.dolt_repo_dir):
+            if (paths.dolt_repo_dir / ".dolt").exists():
+                return
+            raise RuntimeError(dolt_lock_message(paths.dolt_repo_dir))
         if is_valid_dolt_repository(paths.dolt_repo_dir):
             return
         message = (
@@ -216,6 +224,31 @@ def is_valid_dolt_repository(path: Path) -> bool:
     return (path / ".dolt").exists() and command_ok(["dolt", "status"], cwd=path)
 
 
+def dolt_lock_path(path: Path) -> Path:
+    return path / ".dolt" / "noms" / "LOCK"
+
+
+def is_dolt_repository_locked(path: Path) -> bool:
+    return dolt_lock_path(path).exists()
+
+
+def dolt_lock_message(path: Path) -> str:
+    return (
+        f"Dolt repository is locked: {path}\n"
+        "Another Dolt process is holding the database write lock, usually an "
+        "unfinished `dolt sql-server`, `dolt clone`, `dolt pull`, or another "
+        "`run_update_qlib_data.py`.\n"
+        "If that process is still intentionally running, wait for it to finish. "
+        "If it is an abandoned SQL server, stop it first, then re-run this update.\n"
+        "Useful local checks:\n"
+        "  ps aux | grep '[d]olt'\n"
+        "  lsof -i :3306\n"
+        "  pkill -f 'dolt sql-server'   # only if you are sure no update is running\n"
+        "If you intentionally want to export from an already-running Dolt SQL "
+        "server without pulling new data, pass --reuse-dolt-server."
+    )
+
+
 def ensure_git_repository(path: Path, repo_url: str) -> None:
     if path.exists() and command_ok(["git", "rev-parse", "--is-inside-work-tree"], cwd=path):
         return
@@ -245,14 +278,25 @@ def wait_for_database(mysql_url: str, timeout_seconds: int = 30) -> None:
     raise RuntimeError(f"Dolt SQL server did not become ready: {last_error}")
 
 
-def start_dolt_server(paths: UpdatePaths, options: UpdateOptions) -> subprocess.Popen[str]:
-    run(["dolt", "pull", "origin"], cwd=paths.dolt_repo_dir)
+def start_dolt_server(paths: UpdatePaths, options: UpdateOptions) -> Optional[subprocess.Popen[str]]:
+    if is_dolt_repository_locked(paths.dolt_repo_dir):
+        if options.reuse_dolt_server:
+            wait_for_database(options.mysql_url)
+            return None
+        raise RuntimeError(dolt_lock_message(paths.dolt_repo_dir))
+
+    if not options.skip_dolt_pull:
+        run(["dolt", "pull", "origin"], cwd=paths.dolt_repo_dir)
     process = subprocess.Popen(
         ["dolt", "sql-server"],
         cwd=str(paths.dolt_repo_dir),
         text=True,
     )
-    wait_for_database(options.mysql_url)
+    try:
+        wait_for_database(options.mysql_url)
+    except BaseException:
+        stop_dolt_server(process)
+        raise
     return process
 
 
@@ -357,8 +401,12 @@ def dump_calendar(paths: UpdatePaths, options: UpdateOptions) -> None:
 
 def qlib_scripts_env(paths: UpdatePaths) -> dict[str, str]:
     env = os.environ.copy()
-    scripts_path = str(paths.qlib_repo_dir / "scripts")
-    env["PYTHONPATH"] = scripts_path + os.pathsep + env.get("PYTHONPATH", "")
+    qlib_paths = [
+        str(paths.qlib_repo_dir),
+        str(paths.qlib_repo_dir / "scripts"),
+    ]
+    env["PYTHONPATH"] = os.pathsep.join(qlib_paths + [env.get("PYTHONPATH", "")])
+    env["QLIB_REPO_DIR"] = str(paths.qlib_repo_dir)
     return env
 
 
@@ -431,7 +479,9 @@ def create_tarball(paths: UpdatePaths, options: UpdateOptions) -> None:
         print("Generated tarball at:", paths.tarball_path)
 
 
-def stop_dolt_server(process: subprocess.Popen[str]) -> None:
+def stop_dolt_server(process: Optional[subprocess.Popen[str]]) -> None:
+    if process is None:
+        return
     if process.poll() is not None:
         return
     process.terminate()
@@ -494,6 +544,19 @@ def parse_args() -> argparse.Namespace:
         "--skip-exists",
         action="store_true",
         help="Skip existing CSV/index outputs.",
+    )
+    parser.add_argument(
+        "--skip-dolt-pull",
+        action="store_true",
+        help="Do not run `dolt pull origin` before exporting.",
+    )
+    parser.add_argument(
+        "--reuse-dolt-server",
+        action="store_true",
+        help=(
+            "Reuse an already-running Dolt SQL server and skip starting/stopping "
+            "one in this script. This also skips `dolt pull` when a lock is present."
+        ),
     )
     parser.add_argument(
         "--install-dolt",

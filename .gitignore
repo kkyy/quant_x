@@ -63,6 +63,7 @@ models_saved/
 *.joblib
 *.pt
 *.pth
+models/*_meta.json
 
 # Signal output files
 signals/*.txt
@@ -124,3 +125,10 @@ qlib_bin.tar.gz*
 .Trashes
 ehthumbs.db
 desktop.ini
+
+# Local agent/debug scratch files
+.claude/settings.json
+.claude/settings.local.json
+CLAUDE.md
+_debug_positions*.py
+debug_ts.py

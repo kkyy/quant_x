@@ -1,5 +1,6 @@
 """Parameter grid search over TopkDropout strategy."""
 from __future__ import annotations
+import concurrent.futures as _cf
 import logging
 import multiprocessing
 import os
@@ -12,6 +13,47 @@ import pandas as pd
 from .metrics import compute_metrics
 
 logger = logging.getLogger(__name__)
+
+
+def _combo_worker_parallel(
+    engine_config: dict,
+    pred: "pd.Series",
+    params: dict,
+    start_time: Optional[str],
+    end_time: Optional[str],
+    universe_filter,
+    seed: int,
+) -> dict:
+    """Top-level worker for parallel combo execution (single fixed seed).
+
+    Each worker runs in a freshly-spawned subprocess that inherits
+    PYTHONHASHSEED=42 from the parent, ensuring determinism.
+    """
+    import sys
+    import pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))
+
+    import qlib
+    from quant_ex.backtest.engine import BacktestEngine
+    from quant_ex.backtest.metrics import compute_metrics as _compute_metrics
+
+    qlib.init(
+        provider_uri=engine_config["qlib"]["provider_uri"],
+        region=engine_config["qlib"]["region"],
+    )
+    engine = BacktestEngine(engine_config)
+    try:
+        report, _ = engine.run(
+            pred=pred,
+            strategy_params=params,
+            start_time=start_time,
+            end_time=end_time,
+            universe_filter=universe_filter,
+            seed=seed,
+        )
+        return _compute_metrics(report)
+    except Exception as e:
+        return {"_error": str(e)}
 
 
 def _seed_worker(engine_config: dict, pred: pd.Series, params: dict,
@@ -81,6 +123,7 @@ class GridSearchBacktest:
         end_time: Optional[str] = None,
         universe_filter=None,
         multi_seed: bool = False,
+        n_jobs: int = -1,
     ) -> pd.DataFrame:
         """
         Run all parameter combinations.
@@ -89,6 +132,9 @@ class GridSearchBacktest:
             multi_seed: If True, run each combo with 5 built-in seeds in
                         separate subprocesses (so PYTHONHASHSEED differs per
                         seed) and report averaged metrics.
+            n_jobs: Number of parallel workers for single-seed combo search.
+                    -1 (default) uses all CPU cores. 1 disables parallelism.
+                    Ignored when multi_seed=True (seeds are already subprocesses).
 
         Returns:
             DataFrame sorted by sharpe descending.
@@ -102,6 +148,13 @@ class GridSearchBacktest:
             + (f" × {len(seeds)} seeds" if multi_seed else "")
         )
 
+        # ── parallel single-seed path ──────────────────────────────────────
+        if not multi_seed and n_jobs != 1 and len(combos) > 1:
+            return self._run_parallel(
+                combos, keys, start_time, end_time, universe_filter, n_jobs
+            )
+
+        # ── serial / multi-seed path ───────────────────────────────────────
         rows = []
         for i, combo in enumerate(combos, 1):
             params = dict(zip(keys, combo))
@@ -145,6 +198,70 @@ class GridSearchBacktest:
                 + f"  Ret={m.get('annual_return', 0):.2%}"
                 + f"  DD={m.get('max_drawdown', 0):.2%}"
             )
+
+        df = pd.DataFrame(rows)
+        if "sharpe" in df.columns:
+            df = df.sort_values("sharpe", ascending=False).reset_index(drop=True)
+        return df
+
+    def _run_parallel(
+        self,
+        combos: list,
+        keys: list,
+        start_time: Optional[str],
+        end_time: Optional[str],
+        universe_filter,
+        n_jobs: int,
+    ) -> pd.DataFrame:
+        """Run combos in parallel using spawned subprocesses (PYTHONHASHSEED=42)."""
+        max_workers = os.cpu_count() if n_jobs == -1 else max(1, n_jobs)
+        max_workers = min(max_workers, len(combos))
+        logger.info(f"  Running {len(combos)} combos in parallel with {max_workers} workers")
+
+        ctx = multiprocessing.get_context("spawn")
+        combo_results: Dict[tuple, dict] = {}
+
+        with _cf.ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
+            future_to_combo = {
+                executor.submit(
+                    _combo_worker_parallel,
+                    self.config,
+                    self.pred,
+                    dict(zip(keys, combo)),
+                    start_time,
+                    end_time,
+                    universe_filter,
+                    42,
+                ): combo
+                for combo in combos
+            }
+            done = 0
+            for future in _cf.as_completed(future_to_combo):
+                combo = future_to_combo[future]
+                params = dict(zip(keys, combo))
+                done += 1
+                try:
+                    metrics = future.result()
+                except Exception as e:
+                    metrics = {"_error": str(e)}
+                if "_error" in metrics:
+                    logger.warning(f"  [{done}/{len(combos)}] {params} FAILED: {metrics['_error']}")
+                else:
+                    logger.info(
+                        f"  [{done}/{len(combos)}] {params}"
+                        f"  Sharpe={metrics.get('sharpe', 0):.3f}"
+                        f"  Ret={metrics.get('annual_return', 0):.2%}"
+                        f"  DD={metrics.get('max_drawdown', 0):.2%}"
+                    )
+                combo_results[combo] = (params, metrics)
+
+        rows = []
+        for combo in combos:
+            params, metrics = combo_results[combo]
+            if "_error" in metrics:
+                rows.append({**params, "error": metrics["_error"]})
+            else:
+                rows.append({**params, **metrics})
 
         df = pd.DataFrame(rows)
         if "sharpe" in df.columns:
