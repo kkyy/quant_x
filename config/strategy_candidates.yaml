@@ -1,0 +1,124 @@
+# Strategy candidates promoted from walk-forward validation.
+#
+# This file is intentionally not auto-loaded by utils.config.load_config().
+# It records reusable research conclusions so future runs can start from the
+# current best parameter sets instead of rediscovering them from ignored
+# optimization_results artifacts.
+
+research:
+  source_run: "optimization_results/walk_forward_20260428_full_wf"
+  generated_on: "2026-04-28"
+  method: "walk_forward"
+  train_universes: ["csi300", "csi800", "csi1000"]
+  eval_market: "csi300"
+  folds:
+    - {name: "test_2020", train: "2015-01-01..2018-12-31", valid: "2019-01-01..2019-12-31", test: "2020-01-01..2020-12-31"}
+    - {name: "test_2021", train: "2015-01-01..2019-12-31", valid: "2020-01-01..2020-12-31", test: "2021-01-01..2021-12-31"}
+    - {name: "test_2022", train: "2015-01-01..2020-12-31", valid: "2021-01-01..2021-12-31", test: "2022-01-01..2022-12-31"}
+    - {name: "test_2023", train: "2015-01-01..2021-12-31", valid: "2022-01-01..2022-12-31", test: "2023-01-01..2023-12-31"}
+    - {name: "test_2024", train: "2015-01-01..2021-12-31", valid: "2022-01-01..2023-12-31", test: "2024-01-01..2024-12-31"}
+    - {name: "test_2025", train: "2015-01-01..2022-12-31", valid: "2023-01-01..2024-12-31", test: "2025-01-01..2025-12-31"}
+    - {name: "test_2026", train: "2015-01-01..2023-12-31", valid: "2024-01-01..2025-12-31", test: "2026-01-01..2026-04-28"}
+  strategy_grid:
+    topk: [5, 15, 20]
+    n_drop: [1, 3]
+    hold_thresh: [5, 8, 10]
+  scoring:
+    robust_score: "mean_sharpe - 0.5 * sharpe_std + 0.2 * min_sharpe + 0.05 * positive_sharpe_folds"
+    note: "Treat candidates as research starting points, not proof of live profitability."
+
+selected:
+  # Highest robust_score in the completed walk-forward grid. Strong return,
+  # but concentrated: 2026 attribution showed several 50%-60% single-stock weights.
+  active_candidate: "csi800_aggressive_return"
+  # More conservative starting point for manual trading research.
+  conservative_candidate: "csi1000_balanced"
+
+candidates:
+  csi800_aggressive_return:
+    description: "Highest robust_score and highest mean return; needs position concentration controls before manual trading."
+    train_universe: "csi800"
+    eval_market: "csi300"
+    strategy:
+      topk: 5
+      n_drop: 3
+      hold_thresh: 8
+    walk_forward:
+      folds: 7
+      mean_annual_return: 0.590157
+      median_annual_return: 0.4222
+      mean_sharpe: 1.758343
+      median_sharpe: 1.5442
+      min_sharpe: -0.9092
+      sharpe_std: 1.841369
+      worst_max_drawdown: -0.4161
+      positive_return_folds: 6
+      positive_sharpe_folds: 6
+      mean_rank_ic: 0.038243
+      mean_rank_icir: 0.301114
+      robust_score: 0.955818
+    suggested_next_checks:
+      - "Add max single-stock weight cap around 20%-25% and rerun walk-forward."
+      - "Review yearly fold PnL before using for manual stock selection."
+
+  csi1000_balanced:
+    description: "Better signal diagnostics and less severe worst drawdown than the aggressive csi800/topk5 candidate."
+    train_universe: "csi1000"
+    eval_market: "csi300"
+    strategy:
+      topk: 15
+      n_drop: 3
+      hold_thresh: 5
+    walk_forward:
+      folds: 7
+      mean_annual_return: 0.223
+      median_annual_return: 0.282
+      mean_sharpe: 1.030171
+      median_sharpe: 1.1939
+      min_sharpe: -0.2974
+      sharpe_std: 0.681152
+      worst_max_drawdown: -0.2784
+      positive_return_folds: 6
+      positive_sharpe_folds: 6
+      mean_rank_ic: 0.051286
+      mean_rank_icir: 0.389129
+      robust_score: 0.930115
+    suggested_next_checks:
+      - "Use as the first practical low-frequency manual-selection candidate."
+      - "Compare with csi800_stable_all_positive under equal position cap."
+
+  csi800_stable_all_positive:
+    description: "All seven folds had positive return and Sharpe, but Sharpe dispersion is high."
+    train_universe: "csi800"
+    eval_market: "csi300"
+    strategy:
+      topk: 15
+      n_drop: 3
+      hold_thresh: 5
+    walk_forward:
+      folds: 7
+      mean_annual_return: 0.299071
+      median_annual_return: 0.2332
+      mean_sharpe: 1.225586
+      median_sharpe: 0.9191
+      min_sharpe: 0.0028
+      sharpe_std: 1.349994
+      worst_max_drawdown: -0.2672
+      positive_return_folds: 7
+      positive_sharpe_folds: 7
+      mean_rank_ic: 0.038243
+      mean_rank_icir: 0.301114
+      robust_score: 0.901149
+    suggested_next_checks:
+      - "Rerun with multi-seed and position cap; this is a promising stability candidate."
+
+usage:
+  train_candidate_model: >
+    python run_train.py --config <temporary yaml with market.name set to candidate train_universe>
+    --model lgbm --no-extra-factors --tag <candidate>
+  backtest_candidate: >
+    python run_backtest.py --model-path models/<model>.pkl --market csi300
+    --topk <topk> --n-drop <n_drop> --hold-thresh <hold_thresh>
+  rerun_walk_forward: >
+    ./.venv/bin/python run_walk_forward_validation.py --train-universes csi300,csi800,csi1000
+    --eval-market csi300 --topk 5,15,20 --n-drop 1,3 --hold-thresh 5,8,10
