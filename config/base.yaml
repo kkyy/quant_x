@@ -43,6 +43,22 @@ backtest:
   # 给完全相同的模型分数加极小确定性扰动，减少选股排序漂移。
   tie_breaker_epsilon: 1.0e-12
 
+daily_rebalance:
+  # 每天收盘后由 launchd 在 20:00 调用 run_scheduled_rebalance.py。
+  # 真实模式会从该日期开始重放 TopkDropout 回测，保证每日调仓信号来自同一固定起点。
+  start_date: "2024-01-01"
+  market: "csi1000"
+  topk: 15
+  n_drop: 3
+  hold_thresh: 5
+  account: 1000000
+  model_path: ""           # 可填 models/*.pkl；为空时使用 experiment.latest_recorder_id
+  notify_channel: "bark"   # bark | all
+  notify_on_skip: false    # 非交易日默认不推送
+  create_update_tarball: false
+  cache_dir: "signals/daily_rebalance_cache"
+  reminder_rebuild_on_miss: true
+
 signal:
   postprocess:
     enabled: true

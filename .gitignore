@@ -69,6 +69,7 @@ models/*_meta.json
 signals/*.txt
 signals/*.json
 signals/*.csv
+signals/daily_rebalance_cache/
 
 # Backtest results
 backtest_results/

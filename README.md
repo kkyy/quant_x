@@ -28,6 +28,7 @@
 - [回测与网格搜索](#回测与网格搜索)
 - [Walk-forward 验证](#walk-forward-验证)
 - [每日信号](#每日信号)
+- [定时调仓任务](#定时调仓任务)
 - [策略候选配置](#策略候选配置)
 - [通知渠道](#通知渠道)
 - [配置说明](#配置说明)
@@ -354,6 +355,94 @@ config/strategy_candidates.yaml
 ```bash
 ./.venv/bin/python run_daily.py --dry-run
 ```
+
+---
+
+## 定时调仓任务
+
+`run_scheduled_rebalance.py` 用于收盘后自动更新数据、重放固定起点回测、缓存调仓信号，并通过 Bark 推送下一交易日需要执行的调仓动作。默认策略配置在 `config/base.yaml`：
+
+```yaml
+daily_rebalance:
+  start_date: "2024-01-01"
+  market: "csi1000"
+  topk: 15
+  n_drop: 3
+  hold_thresh: 5
+  account: 1000000
+  model_path: ""           # 可填 models/*.pkl；为空时使用 experiment.latest_recorder_id
+  notify_channel: "bark"
+  reminder_rebuild_on_miss: true
+```
+
+真实运行前需要二选一配置模型来源：
+
+```yaml
+daily_rebalance:
+  model_path: "models/lgbm_xxx.pkl"
+```
+
+或填写 `experiment.latest_recorder_id`。
+
+手动 mock 测试，不更新数据、不回测、不推送：
+
+```bash
+./.venv/bin/python run_scheduled_rebalance.py --mock --dry-run
+```
+
+手动发送一条 mock Bark 测试：
+
+```bash
+./.venv/bin/python run_scheduled_rebalance.py --mock
+```
+
+安装 macOS launchd 定时任务：
+
+```bash
+scripts/install_daily_rebalance_launchd.sh
+```
+
+安装后会注册三个当前用户任务：
+
+| 任务 | 时间 | 功能 |
+|---|---:|---|
+| `com.quant_ex.daily_rebalance` | 20:00 | 更新 qlib 数据，确认交易日，生成并缓存调仓信号，推送 Bark |
+| `com.quant_ex.daily_rebalance.open_reminder` | 09:00 | 读取前一交易日缓存，开盘前再次提醒 |
+| `com.quant_ex.daily_rebalance.close_reminder` | 14:00 | 读取前一交易日缓存，收盘前再次提醒 |
+
+如果 09:00 或 14:00 没有读到当天要执行的缓存，且 `daily_rebalance.reminder_rebuild_on_miss: true`，脚本会尝试重新更新 qlib 数据，并从固定 `start_date` 回测到上一交易日，再缓存和推送提醒。这用于覆盖前一晚数据源延迟或 20:00 任务失败的情况。
+
+查看 launchd 中的任务：
+
+```bash
+launchctl print gui/$(id -u) | grep quant_ex
+launchctl print gui/$(id -u)/com.quant_ex.daily_rebalance
+launchctl print gui/$(id -u)/com.quant_ex.daily_rebalance.open_reminder
+launchctl print gui/$(id -u)/com.quant_ex.daily_rebalance.close_reminder
+```
+
+重点看 `runs`、`last exit code` 和 `event triggers`。`last exit code = 0` 通常表示上次执行成功。
+
+日志文件：
+
+```text
+logs/daily_rebalance.out.log
+logs/daily_rebalance.err.log
+logs/daily_rebalance_open_reminder.out.log
+logs/daily_rebalance_open_reminder.err.log
+logs/daily_rebalance_close_reminder.out.log
+logs/daily_rebalance_close_reminder.err.log
+```
+
+手动触发某个任务并看日志：
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.quant_ex.daily_rebalance.open_reminder
+tail -n 100 logs/daily_rebalance_open_reminder.out.log
+tail -n 100 logs/daily_rebalance_open_reminder.err.log
+```
+
+调仓缓存写入 `signals/daily_rebalance_cache/`，默认不入库。
 
 ---
 
