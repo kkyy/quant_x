@@ -320,6 +320,8 @@ def _run_real_rebalance(config: dict, cfg: Dict[str, Any], trade_date: str, next
     previous = _snapshot(prev_obj)
     actions = _diff_positions(previous, target)
     metrics = _last_metrics(report)
+    name_map = _load_stock_names()
+    sector_map = _load_sector_map(config)
     return _format_report(
         trade_date=trade_date,
         next_trade_date=next_trade_date,
@@ -329,6 +331,8 @@ def _run_real_rebalance(config: dict, cfg: Dict[str, Any], trade_date: str, next
         actions=actions,
         metrics=metrics,
         mock=False,
+        name_map=name_map,
+        sector_map=sector_map,
     )
 
 
@@ -356,6 +360,8 @@ def _mock_report(cfg: Dict[str, Any], trade_date: str, next_trade_date: str) -> 
         "SH603197": {"shares": 1000, "price": 29.30, "value": 29_300},
     }
     actions = _diff_positions(previous, target)
+    name_map = _load_stock_names()
+    sector_map = _load_sector_map({})
     return _format_report(
         trade_date=trade_date,
         next_trade_date=next_trade_date,
@@ -365,6 +371,8 @@ def _mock_report(cfg: Dict[str, Any], trade_date: str, next_trade_date: str) -> 
         actions=actions,
         metrics={"return": 0.0031, "cost": 0.0004},
         mock=True,
+        name_map=name_map,
+        sector_map=sector_map,
     )
 
 
@@ -561,6 +569,48 @@ def _rebuild_signal_for_reminder(
     return _load_latest_signal_cache(cfg)
 
 
+def _to_qlib_code(code: str) -> str:
+    code = str(code).strip()
+    if len(code) != 6 or not code.isdigit():
+        return code
+    prefix = int(code[0])
+    if prefix in (0, 2, 3):
+        return f"SZ{code}"
+    if prefix in (6, 9):
+        return f"SH{code}"
+    if prefix in (4, 8):
+        return f"BJ{code}"
+    return code
+
+
+def _load_stock_names() -> Dict[str, str]:
+    path = PROJECT_ROOT / "crawler" / "data" / "sector_stocks.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        names = {}
+        for category in data.values():
+            for sector in category.values():
+                for stock in sector.get("stocks", []):
+                    code = stock.get("code", "")
+                    name = stock.get("name", "")
+                    if code and name:
+                        names[_to_qlib_code(code)] = name
+        return names
+    except Exception:
+        return {}
+
+
+def _load_sector_map(config: dict) -> Dict[str, str]:
+    try:
+        provider = SectorDataProvider(config)
+        return provider.get_map() or {}
+    except Exception:
+        return {}
+
+
 def _format_report(
     trade_date: str,
     next_trade_date: str,
@@ -570,6 +620,8 @@ def _format_report(
     actions: Iterable[RebalanceAction],
     metrics: Dict[str, float],
     mock: bool,
+    name_map: Optional[Dict[str, str]] = None,
+    sector_map: Optional[Dict[str, str]] = None,
 ) -> str:
     title = "量化调仓信号"
     if mock:
@@ -602,8 +654,10 @@ def _format_report(
             sign = "+" if item.action == "buy" else "-"
             price = f" @ {item.price:.2f}" if item.price > 0 else ""
             value = f" 约{item.value:,.0f}元" if item.value > 0 else ""
+            name = name_map.get(item.instrument, "") if name_map else ""
+            name_str = f" {name}" if name else ""
             lines.append(
-                f"{label[item.action]} {item.instrument}: {sign}{item.shares:.0f}股{price}{value}"
+                f"{label[item.action]} {item.instrument}{name_str}: {sign}{item.shares:.0f}股{price}{value}"
             )
 
     lines.append("")
@@ -612,7 +666,13 @@ def _format_report(
         lines.append("无目标持仓。")
     else:
         for inst, info in sorted(target.items()):
-            lines.append(f"{inst}: {info['shares']:.0f}股 约{info['value']:,.0f}元")
+            name = name_map.get(inst, "") if name_map else ""
+            sector = sector_map.get(inst, "") if sector_map else ""
+            name_str = f" {name}" if name else ""
+            sec_str = f" [{sector}]" if sector else ""
+            lines.append(
+                f"{inst}{name_str}{sec_str}: {info['shares']:.0f}股 约{info['value']:,.0f}元"
+            )
     return "\n".join(lines)
 
 
