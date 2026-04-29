@@ -221,7 +221,11 @@ def ensure_dolt_repository(paths: UpdatePaths, options: UpdateOptions) -> None:
 
 
 def is_valid_dolt_repository(path: Path) -> bool:
-    return (path / ".dolt").exists() and command_ok(["dolt", "status"], cwd=path)
+    valid = (path / ".dolt").exists() and command_ok(["dolt", "status"], cwd=path)
+    # dolt status creates a LOCK file but doesn't clean it up.
+    # Remove the stale lock so start_dolt_server doesn't trip over it.
+    dolt_lock_path(path).unlink(missing_ok=True)
+    return valid
 
 
 def dolt_lock_path(path: Path) -> Path:
@@ -229,7 +233,21 @@ def dolt_lock_path(path: Path) -> Path:
 
 
 def is_dolt_repository_locked(path: Path) -> bool:
-    return dolt_lock_path(path).exists()
+    lock = dolt_lock_path(path)
+    if not lock.exists():
+        return False
+    # dolt status (and some other commands) leave behind a stale LOCK file.
+    # If no lock-holding dolt process is actually running, treat it as unlocked.
+    result = subprocess.run(
+        ["pgrep", "-f", "dolt sql-server|dolt clone|dolt pull"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        lock.unlink(missing_ok=True)
+        return False
+    return True
 
 
 def dolt_lock_message(path: Path) -> str:

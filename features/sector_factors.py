@@ -47,12 +47,30 @@ class SectorFactorEngine(BaseFactor):
         sector_map: Optional[Dict[str, str]] = None,
         momentum_windows: Optional[List[int]] = None,
         reversal_windows: Optional[List[int]] = None,
+        stock_vs_sector_windows: Optional[List[int]] = None,
         concept_map: Optional[Dict[str, str]] = None,
+        include_sector_momentum: bool = True,
+        include_sector_relative: bool = True,
+        include_stock_vs_sector: bool = True,
+        include_sector_reversal: bool = True,
+        include_sector_volatility: bool = True,
+        include_sector_id: bool = True,
+        include_concept: bool = True,
+        include_concept_id: bool = True,
     ):
         self.sector_map = sector_map or {}
         self.concept_map = concept_map or {}
         self.mom_windows = momentum_windows or [5, 10, 20, 60]
         self.rev_windows = reversal_windows or [5, 20]
+        self.stock_vs_sector_windows = stock_vs_sector_windows or [5, 20]
+        self.include_sector_momentum = include_sector_momentum
+        self.include_sector_relative = include_sector_relative
+        self.include_stock_vs_sector = include_stock_vs_sector
+        self.include_sector_reversal = include_sector_reversal
+        self.include_sector_volatility = include_sector_volatility
+        self.include_sector_id = include_sector_id
+        self.include_concept = include_concept
+        self.include_concept_id = include_concept_id
 
     # ── BaseFactor interface ───────────────────────────────────────────────────
 
@@ -71,7 +89,7 @@ class SectorFactorEngine(BaseFactor):
 
         # Pivot → (datetime × instrument)
         close = price_df[close_col].unstack("instrument")
-        rets = close.pct_change()
+        rets = close.pct_change(fill_method=None)
 
         instruments = close.columns.tolist()
         pieces = []
@@ -80,35 +98,41 @@ class SectorFactorEngine(BaseFactor):
             sector_s = pd.Series(
                 {i: self.sector_map.get(i, "Unknown") for i in instruments}
             )
-            for w in self.mom_windows:
-                f = self._sector_momentum(rets, sector_s, w)
-                pieces.append(f.stack().rename(f"sector_mom_{w}d"))
+            if self.include_sector_momentum:
+                for w in self.mom_windows:
+                    f = self._sector_momentum(rets, sector_s, w)
+                    pieces.append(f.stack().rename(f"sector_mom_{w}d"))
 
-            for w in self.mom_windows:
-                f = self._sector_rel_strength(rets, sector_s, w)
-                pieces.append(f.stack().rename(f"sector_rel_{w}d"))
+            if self.include_sector_relative:
+                for w in self.mom_windows:
+                    f = self._sector_rel_strength(rets, sector_s, w)
+                    pieces.append(f.stack().rename(f"sector_rel_{w}d"))
 
-            for w in [5, 20]:
-                f = self._stock_vs_sector(rets, sector_s, w)
-                pieces.append(f.stack().rename(f"stock_vs_sector_{w}d"))
+            if self.include_stock_vs_sector:
+                for w in self.stock_vs_sector_windows:
+                    f = self._stock_vs_sector(rets, sector_s, w)
+                    pieces.append(f.stack().rename(f"stock_vs_sector_{w}d"))
 
-            for w in self.rev_windows:
-                f = self._sector_reversal(rets, sector_s, w)
-                pieces.append(f.stack().rename(f"sector_rev_{w}d"))
+            if self.include_sector_reversal:
+                for w in self.rev_windows:
+                    f = self._sector_reversal(rets, sector_s, w)
+                    pieces.append(f.stack().rename(f"sector_rev_{w}d"))
 
-            for w in [10, 20]:
-                f = self._sector_vol(rets, sector_s, w)
-                pieces.append(f.stack().rename(f"sector_vol_{w}d"))
+            if self.include_sector_volatility:
+                for w in [10, 20]:
+                    f = self._sector_vol(rets, sector_s, w)
+                    pieces.append(f.stack().rename(f"sector_vol_{w}d"))
 
-            sector_id = self._sector_id(instruments, sector_s)
-            id_df = pd.DataFrame(
-                {inst: sector_id[inst] for inst in instruments},
-                index=close.index,
-            )
-            pieces.append(id_df.stack().rename("sector_id"))
+            if self.include_sector_id:
+                sector_id = self._sector_id(instruments, sector_s)
+                id_df = pd.DataFrame(
+                    {inst: sector_id[inst] for inst in instruments},
+                    index=close.index,
+                )
+                pieces.append(id_df.stack().rename("sector_id"))
 
         # Concept factors (短期动量更有效)
-        if self.concept_map:
+        if self.include_concept and self.concept_map:
             concept_s = pd.Series(
                 {i: self.concept_map.get(i, "Unknown") for i in instruments}
             )
@@ -120,12 +144,17 @@ class SectorFactorEngine(BaseFactor):
                 f = self._sector_rel_strength(rets, concept_s, w)
                 pieces.append(f.stack().rename(f"concept_rel_{w}d"))
 
-            concept_id = self._sector_id(instruments, concept_s)
-            cid_df = pd.DataFrame(
-                {inst: concept_id[inst] for inst in instruments},
-                index=close.index,
-            )
-            pieces.append(cid_df.stack().rename("concept_id"))
+            if self.include_concept_id:
+                concept_id = self._sector_id(instruments, concept_s)
+                cid_df = pd.DataFrame(
+                    {inst: concept_id[inst] for inst in instruments},
+                    index=close.index,
+                )
+                pieces.append(cid_df.stack().rename("concept_id"))
+
+        if not pieces:
+            logger.warning("SectorFactorEngine: all factor groups disabled, skipping.")
+            return pd.DataFrame(index=price_df.index)
 
         result = pd.concat(pieces, axis=1)
         result.index.names = ["datetime", "instrument"]

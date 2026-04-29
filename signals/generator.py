@@ -10,8 +10,10 @@ Workflow:
 6. Format human-readable report
 """
 from __future__ import annotations
+import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -37,6 +39,42 @@ class SignalGenerator:
         self.sector_provider = sector_provider
 
     # ── public ────────────────────────────────────────────────────────────────
+
+    def _load_stock_names(self) -> Dict[str, str]:
+        """Load stock name mapping from sector_stocks.json."""
+        path = Path(__file__).parent.parent / "crawler" / "data" / "sector_stocks.json"
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            names = {}
+            for category in data.values():
+                for sector in category.values():
+                    for stock in sector.get("stocks", []):
+                        code = stock.get("code", "")
+                        name = stock.get("name", "")
+                        if code and name:
+                            names[self._to_qlib_code(code)] = name
+            return names
+        except Exception as e:
+            logger.warning(f"Failed to load stock names: {e}")
+            return {}
+
+    @staticmethod
+    def _to_qlib_code(code: str) -> str:
+        """Convert 6-digit numeric code to qlib format (SH/SZ prefix)."""
+        code = str(code).strip()
+        if len(code) != 6 or not code.isdigit():
+            return code
+        prefix = int(code[0])
+        if prefix in (0, 2, 3):
+            return f"SZ{code}"
+        if prefix in (6, 9):
+            return f"SH{code}"
+        if prefix in (4, 8):
+            return f"BJ{code}"
+        return code
 
     def generate(
         self,
@@ -95,6 +133,9 @@ class SignalGenerator:
             sm = self.sector_provider.get_map()
             sector_info = {i: sm.get(i, "") for i in top_stocks.index}
 
+        stock_names = self._load_stock_names()
+        name_info = {i: stock_names.get(i, "") for i in top_stocks.index}
+
         target_positions = self._target_positions(top_stocks, prices, account_value)
         signals = self._diff_signals(target_positions, current_positions or {}, prices)
 
@@ -103,6 +144,7 @@ class SignalGenerator:
             "latest_prediction_date": str(latest_dt)[:10],
             "top_stocks": top_stocks.to_dict(),
             "sector_info": sector_info,
+            "name_info": name_info,
             "target_positions": target_positions,
             "signals": signals,
             "account_value": account_value,
@@ -124,9 +166,11 @@ class SignalGenerator:
 
         for inst, info in data["target_positions"].items():
             sec = data.get("sector_info", {}).get(inst, "")
+            name = data.get("name_info", {}).get(inst, "")
             sec_str = f"[{sec}]" if sec else ""
+            name_str = f" {name}" if name else ""
             lines.append(
-                f"  {inst} {sec_str}\n"
+                f"  {inst}{name_str} {sec_str}\n"
                 f"    评分={info['score']:.4f}  价格=¥{info['price']:.2f}"
                 f"  目标={info['target_shares']}股  ≈¥{info['target_value']:,.0f}"
             )

@@ -1,0 +1,29 @@
+market:
+  name: "csi300"
+  benchmark: "SH000300"
+
+strategy:
+  topk_dropout:
+    topk: 15
+    n_drop: 3
+    hold_thresh: 5
+  universe_filter:
+    exclude_kcb: true
+    exclude_list: []
+    min_price: 3
+    exclude_st: true
+    exclude_suspended: true
+
+model:
+  features:
+    factors:
+      - name: "technical"
+        ma_pairs: [[5, 20], [10, 60]]
+        rsi_windows: [14, 20]
+        bb_windows: [20]
+        atr_windows: [14]
+        obv_windows: [10, 20]
+        vwap_windows: [5, 10, 20]
+      - name: "sector"
+        momentum_windows: [5, 10, 20, 60]
+        reversal_windows: [5, 20]

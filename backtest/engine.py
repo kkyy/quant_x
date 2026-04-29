@@ -106,6 +106,8 @@ class BacktestEngine:
         topk       = sp.get("topk",       strat_cfg.get("topk",       10))
         n_drop     = sp.get("n_drop",     strat_cfg.get("n_drop",     3))
         hold_thresh = sp.get("hold_thresh", strat_cfg.get("hold_thresh", 5))
+        method_sell = sp.get("method_sell", strat_cfg.get("method_sell", "bottom"))
+        method_buy = sp.get("method_buy", strat_cfg.get("method_buy", "top"))
         tie_breaker_epsilon = bt_cfg.get("tie_breaker_epsilon", 1e-12)
 
         pred = stabilize_signal(pred, tie_breaker_epsilon=tie_breaker_epsilon)
@@ -113,11 +115,28 @@ class BacktestEngine:
         import random, numpy as np
         random.seed(seed)
         np.random.seed(seed)
+
+        original_choice = None
+        if method_sell == "random" or method_buy == "random":
+            original_choice = np.random.choice
+
+            def _choice_as_python_strings(a, *args, **kwargs):
+                result = original_choice(a, *args, **kwargs)
+                if isinstance(result, np.ndarray) and result.dtype.kind in {"O", "U", "S"}:
+                    return [str(item) for item in result.tolist()]
+                if isinstance(result, np.generic):
+                    return result.item()
+                return result
+
+            np.random.choice = _choice_as_python_strings
+
         strategy = TopkDropoutStrategy(
             signal=pred,
             topk=topk,
             n_drop=n_drop,
             hold_thresh=hold_thresh,
+            method_sell=method_sell,
+            method_buy=method_buy,
         )
 
         executor = SimulatorExecutor(
@@ -136,12 +155,16 @@ class BacktestEngine:
         bt_end   = end_time   or datetime.now().strftime("%Y-%m-%d")
         acct     = account    or self._defaults["account"]
 
-        report, positions = backtest_daily(
-            start_time=bt_start,
-            end_time=bt_end,
-            strategy=strategy,
-            account=acct,
-            benchmark=None,
-            executor=executor,
-        )
+        try:
+            report, positions = backtest_daily(
+                start_time=bt_start,
+                end_time=bt_end,
+                strategy=strategy,
+                account=acct,
+                benchmark=None,
+                executor=executor,
+            )
+        finally:
+            if original_choice is not None:
+                np.random.choice = original_choice
         return report, positions
