@@ -10,7 +10,7 @@ import tarfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 
@@ -61,6 +61,7 @@ class UpdateOptions:
     output_dir: Optional[Path]
     python: str
     supplement_source: str  # "none" | "akshare" | "eastmoney"
+    force: bool  # skip staleness check, always re-run full pipeline
 
 
 def resolve_path(path: str, base: Path = PROJECT_ROOT) -> Path:
@@ -140,6 +141,7 @@ def build_options(config: Dict[str, Any], args: argparse.Namespace) -> UpdateOpt
         output_dir=resolve_path(output_dir) if output_dir else None,
         python=args.python or sys.executable,
         supplement_source=args.supplement_source or update_config.get("supplement_source", "none"),
+        force=args.force,
     )
 
 
@@ -298,15 +300,106 @@ def wait_for_database(mysql_url: str, timeout_seconds: int = 30) -> None:
     raise RuntimeError(f"Dolt SQL server did not become ready: {last_error}")
 
 
-def start_dolt_server(paths: UpdatePaths, options: UpdateOptions) -> Optional[subprocess.Popen[str]]:
+def _dolt_head_commit(dolt_repo_dir: Path) -> Optional[str]:
+    """Return the current HEAD commit hash of the Dolt repo, or None on failure."""
+    try:
+        result = subprocess.run(
+            ["dolt", "log", "--format=%H", "-1"],
+            cwd=str(dolt_repo_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip() or None
+    except Exception:
+        return None
+
+
+def _source_cutoff_date(source_dir: Path, sample_size: int = 5) -> Optional[str]:
+    """Return the latest tradedate across a sample of source CSVs.
+
+    Used to check whether the existing source data is already up-to-date
+    without reading every file.
+    """
+    csv_files = sorted(source_dir.glob("*.csv"))
+    if not csv_files:
+        return None
+    # Prefer liquid large-cap stocks for a fast representative sample
+    preferred = ["SH600000.csv", "SH600519.csv", "SH601318.csv", "SZ000001.csv"]
+    candidates: list[Path] = []
+    for name in preferred:
+        p = source_dir / name
+        if p.exists():
+            candidates.append(p)
+    for f in csv_files:
+        if len(candidates) >= sample_size:
+            break
+        if f not in candidates:
+            candidates.append(f)
+    latest: Optional[str] = None
+    for f in candidates:
+        try:
+            df = pd.read_csv(f, usecols=["tradedate"], parse_dates=["tradedate"], nrows=1)
+            if df.empty:
+                continue
+            # Read just the last line for the latest date
+            with open(f, "r") as fh:
+                last_line = fh.readlines()[-1].strip()
+            date_str = last_line.split(",")[0]  # first column is tradedate
+            if latest is None or date_str > latest:
+                latest = date_str
+        except Exception:
+            continue
+    return latest
+
+
+def _data_is_stale(paths: UpdatePaths, dolt_had_updates: bool) -> bool:
+    """Check whether the downstream pipeline needs to re-run.
+
+    Returns True if the pipeline should run, False if data is already current.
+    """
+    # If dolt pull brought new commits, always re-run
+    if dolt_had_updates:
+        return True
+    # Compare source CSV cutoff vs today
+    cutoff = _source_cutoff_date(paths.source_dir)
+    if cutoff is None:
+        return True  # no source data at all
+    today = pd.Timestamp.today().strftime("%Y-%m-%d")
+    if cutoff >= today:
+        print(f"Source data is current (cutoff={cutoff}), skipping full pipeline.")
+        return False
+    print(f"Source data cutoff={cutoff} < today={today}, re-running pipeline.")
+    return True
+
+
+def start_dolt_server(paths: UpdatePaths, options: UpdateOptions) -> Tuple[Optional[subprocess.Popen[str]], bool]:
+    """Start a Dolt SQL server for data export.
+
+    Returns
+    -------
+    (process, dolt_had_updates)
+        process: the Popen handle (or None if reusing an existing server)
+        dolt_had_updates: True if ``dolt pull`` fetched new commits
+    """
+    dolt_had_updates = False
+
     if is_dolt_repository_locked(paths.dolt_repo_dir):
         if options.reuse_dolt_server:
             wait_for_database(options.mysql_url)
-            return None
+            return None, True  # assume stale when reusing external server
         raise RuntimeError(dolt_lock_message(paths.dolt_repo_dir))
 
     if not options.skip_dolt_pull:
+        head_before = _dolt_head_commit(paths.dolt_repo_dir)
         run(["dolt", "pull", "origin"], cwd=paths.dolt_repo_dir)
+        head_after = _dolt_head_commit(paths.dolt_repo_dir)
+        dolt_had_updates = head_before != head_after
+        if dolt_had_updates:
+            print(f"Dolt pull: new commits detected ({head_before[:8] if head_before else 'none'} → {head_after[:8] if head_after else 'none'})")
+        else:
+            print("Dolt pull: already up-to-date, no new commits.")
+
     process = subprocess.Popen(
         ["dolt", "sql-server"],
         cwd=str(paths.dolt_repo_dir),
@@ -317,7 +410,7 @@ def start_dolt_server(paths: UpdatePaths, options: UpdateOptions) -> Optional[su
     except BaseException:
         stop_dolt_server(process)
         raise
-    return process
+    return process, dolt_had_updates
 
 
 def open_db(mysql_url: str):
@@ -551,8 +644,16 @@ def supplement_source_data(paths: UpdatePaths, options: UpdateOptions) -> None:
 
 def refresh_qlib_bin(paths: UpdatePaths, options: UpdateOptions) -> None:
     ensure_repositories(paths, options)
-    dolt_process = start_dolt_server(paths, options)
+    dolt_process, dolt_had_updates = start_dolt_server(paths, options)
     try:
+        # Staleness check: skip pipeline if dolt had no new commits and source is current
+        if not options.force and not _data_is_stale(paths, dolt_had_updates):
+            print("Data is up-to-date and --force not set. Skipping full pipeline.")
+            # Still update calendar and index files (cheap, always useful)
+            dump_calendar(paths, options)
+            copy_index_files(paths)
+            return
+
         dump_stock_source(paths, options)
         supplement_source_data(paths, options)
         normalize_source(paths, options)
@@ -627,6 +728,11 @@ def parse_args() -> argparse.Namespace:
         help="Move an incomplete first Dolt clone aside and start a new clone.",
     )
     parser.add_argument("--no-tarball", action="store_true", help="Do not create qlib_bin.tar.gz.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-run the full pipeline even if data is already up-to-date.",
+    )
     parser.add_argument(
         "--supplement-source",
         choices=["none", "akshare", "eastmoney"],
