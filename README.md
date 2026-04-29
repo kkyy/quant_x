@@ -153,7 +153,8 @@ data/qlib_update/
 注意：
 
 - `qlib_data/`、`backtest_results/`、`optimization_results/` 都是运行产物，默认被 `.gitignore` 忽略。
-- Dolt 仓库被其他进程锁住时，脚本会给出明确提示，避免误删或破坏正在下载的数据。
+- Dolt 仓库被其他进程锁住时，脚本会给出明确提示。`dolt status` 遗留的 stale LOCK 文件现在会自动清理。
+- 如果已有 `dolt sql-server` 在运行，可复用：`--reuse-dolt-server`
 - qlib repo 和 scripts 路径会自动加入 `PYTHONPATH`，用于 normalize / dump 阶段。
 
 ---
@@ -341,6 +342,15 @@ config/strategy_candidates.yaml
 ./.venv/bin/python run_daily.py --model-path models/lgbm_xxx.pkl --dry-run
 ```
 
+使用策略覆盖配置（推荐：训练股票池与评估股票池分离时）：
+
+```bash
+./.venv/bin/python run_daily.py \
+  --config config/daily_csi1000.yaml \
+  --model-path models/lgbm_xxx.pkl \
+  --dry-run
+```
+
 指定账户金额和当前持仓：
 
 ```bash
@@ -388,6 +398,13 @@ daily_rebalance:
 
 ```bash
 ./.venv/bin/python run_scheduled_rebalance.py --mock --dry-run
+```
+
+输出现在包含股票中文名称和板块信息：
+
+```text
+买入 SH600216 浙江医药: +500股 @ 12.40 约6,200元
+目标持仓: SH600216 浙江医药 [原料药]: 500股 约6,200元
 ```
 
 手动发送一条 mock Bark 测试：
@@ -566,6 +583,8 @@ strategy:
     exclude_kcb: true
     exclude_list: []
     min_price: 3
+    exclude_st: true           # 基于名称排除 ST 股
+    exclude_suspended: true    # 排除最新交易日成交量为 0 的停牌股
 
 signal:
   postprocess:
@@ -587,6 +606,23 @@ model:
     device_type: "cpu"
 ```
 
+板块因子支持细粒度开关，方便做消融实验：
+
+```yaml
+model:
+  features:
+    factors:
+      - name: "sector"
+        include_sector_momentum: true
+        include_sector_relative: true
+        include_stock_vs_sector: true
+        include_sector_reversal: true
+        include_sector_volatility: true
+        include_sector_id: true
+        include_concept: true
+        include_concept_id: true
+```
+
 多 seed ensemble：
 
 ```yaml
@@ -606,7 +642,8 @@ quant_ex/
 │   ├── base.yaml
 │   ├── model.yaml
 │   ├── notify.yaml.example
-│   └── strategy_candidates.yaml
+│   ├── strategy_candidates.yaml
+│   └── daily_csi1000.yaml    # per-strategy signal override (example)
 ├── data/
 │   ├── loader.py
 │   ├── qlib_update/
