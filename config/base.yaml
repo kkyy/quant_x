@@ -29,6 +29,28 @@ strategy:
     topk: 10
     n_drop: 3
     hold_thresh: 5
+  # Regime-aware parameter switching — dynamically adjusts topk/n_drop/hold_thresh
+  # based on the detected market regime (calm_bull, calm_bear, volatile_bull, volatile_bear).
+  # Requires the "regime" factor to be registered in config/model.yaml features.factors.
+  regime_switch:
+    enabled: false
+    rules:
+      0:  # calm_bull
+        topk: 15
+        n_drop: 3
+        hold_thresh: 5
+      1:  # calm_bear
+        topk: 10
+        n_drop: 1
+        hold_thresh: 8
+      2:  # volatile_bull
+        topk: 12
+        n_drop: 2
+        hold_thresh: 5
+      3:  # volatile_bear
+        topk: 8
+        n_drop: 1
+        hold_thresh: 10
   universe_filter:
     exclude_kcb: true
     exclude_list: []

@@ -116,6 +116,40 @@ kept = pipeline.compute_with_screening(price_data, forward_returns=label)
 
 **Multi-seed isolation**: `run_backtest.py --seeds` spawns a subprocess per seed with `PYTHONHASHSEED` set.
 
+## Regime-Aware Strategy Switching
+
+`RegimeStrategySwitch` (`strategy/regime_switch.py`) dynamically overrides `topk`/`n_drop`/`hold_thresh` based on the detected market regime produced by `RegimeFeatureEngine`.
+
+Enable in `config/base.yaml`:
+
+```yaml
+strategy:
+  regime_switch:
+    enabled: true
+    rules:
+      0:  # calm_bull
+        topk: 15
+        n_drop: 3
+        hold_thresh: 5
+      1:  # calm_bear
+        topk: 10
+        n_drop: 1
+        hold_thresh: 8
+      2:  # volatile_bull
+        topk: 12
+        n_drop: 2
+        hold_thresh: 5
+      3:  # volatile_bear
+        topk: 8
+        n_drop: 1
+        hold_thresh: 10
+```
+
+Requirements:
+- The `"regime"` factor must be registered in `config/model.yaml → features.factors` (or trained into the model's `factor_pipeline`)
+- `run_scheduled_rebalance.py` and `run_daily.py` both auto-detect and apply regime overrides when `enabled: true`
+- If detection fails (missing data, unimportable module), the strategy falls back to base parameters with a warning
+
 ## Configuration
 
 `config/notify.yaml` is gitignored — copy from `config/notify.yaml.example`.

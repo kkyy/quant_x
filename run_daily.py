@@ -152,6 +152,19 @@ def main(
     else:
         price_data = None
 
+    # ── Regime-aware parameter switching (optional) ────────────────────────────
+    try:
+        from quant_ex.strategy.regime_switch import RegimeStrategySwitch
+
+        regime_switch = RegimeStrategySwitch.from_config(config)
+        if regime_switch is not None and price_data is not None:
+            regime_label = regime_switch.detect_regime(price_data)
+            base_params = config.get("strategy", {}).get("topk_dropout", {})
+            adjusted = regime_switch.adjust(base_params, regime_label)
+            config.setdefault("strategy", {}).setdefault("topk_dropout", {}).update(adjusted)
+    except Exception as exc:
+        logger.warning("Regime switch integration skipped: %s", exc)
+
     sig_gen = SignalGenerator(config, data_loader, universe_filter, sector_provider)
     data = sig_gen.generate(
         model=model,

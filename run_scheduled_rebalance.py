@@ -718,6 +718,27 @@ def main() -> None:
 
     trade_date = pd.Timestamp(args.today or datetime.now().strftime("%Y-%m-%d")).normalize()
     trade_date_str = trade_date.strftime("%Y-%m-%d")
+
+    # ── Regime-aware parameter switching (optional) ────────────────────────────
+    try:
+        from quant_ex.strategy.regime_switch import RegimeStrategySwitch
+
+        regime_switch = RegimeStrategySwitch.from_config(config)
+        if regime_switch is not None:
+            # Need price_data to detect regime; reuse data_loader
+            dl = DataLoader(config)
+            instruments = cfg.get("market", config.get("market", {}).get("name", "csi300"))
+            price_data = dl.load_price_data(
+                instruments=instruments,
+                start_time=cfg["start_date"],
+                end_time=trade_date_str,
+            )
+            regime_label = regime_switch.detect_regime(price_data)
+            cfg = regime_switch.adjust_cfg(cfg, regime_label)
+            config = _apply_strategy_config(raw_config, cfg)
+    except Exception as exc:
+        logger.warning("Regime switch integration skipped: %s", exc)
+
     logger.info("=== 收盘后调仓任务 %s ===", trade_date_str)
 
     if args.remind:
