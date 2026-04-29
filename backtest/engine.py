@@ -78,6 +78,8 @@ class BacktestEngine:
         account: Optional[float] = None,
         universe_filter=None,
         seed: int = 42,
+        open_cost: Optional[float] = None,
+        close_cost: Optional[float] = None,
     ) -> Tuple[pd.DataFrame, Dict]:
         """
         Run a single backtest.
@@ -145,8 +147,8 @@ class BacktestEngine:
             exchange_kwargs={
                 "freq": "day",
                 "deal_price": "close",
-                "open_cost":  self._defaults["open_cost"],
-                "close_cost": self._defaults["close_cost"],
+                "open_cost":  open_cost  if open_cost  is not None else self._defaults["open_cost"],
+                "close_cost": close_cost if close_cost is not None else self._defaults["close_cost"],
                 "min_cost":   self._defaults["min_cost"],
             },
         )

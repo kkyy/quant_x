@@ -195,10 +195,36 @@ def summarize(
             + w.get("positive_sharpe_folds", 0.05) * row["positive_sharpe_folds"]
         )
         rows.append(row)
-    return pd.DataFrame(rows).sort_values(
+    df = pd.DataFrame(rows).sort_values(
         ["robust_score", "mean_sharpe", "worst_max_drawdown"],
         ascending=[False, False, False],
-    )
+    ).reset_index(drop=True)
+
+    # GAP-05: Pareto front on (mean_sharpe, min_sharpe) — both higher is better
+    df["pareto_front"] = _compute_pareto_front(df, ["mean_sharpe", "min_sharpe"])
+    return df
+
+
+def _compute_pareto_front(df: pd.DataFrame, objectives: list) -> pd.Series:
+    """Mark configs on the Pareto-optimal front (all objectives higher-is-better).
+
+    A row is dominated if another row is >= in ALL objectives and > in at least one.
+    Returns a boolean Series; True = Pareto-optimal.
+    """
+    values = df[objectives].to_numpy(dtype=float, na_value=float("-inf"))
+    n = len(values)
+    pareto = [True] * n
+    for i in range(n):
+        if not pareto[i]:
+            continue
+        for j in range(n):
+            if i == j or not pareto[j]:
+                continue
+            # j dominates i?
+            if all(values[j] >= values[i]) and any(values[j] > values[i]):
+                pareto[i] = False
+                break
+    return pd.Series(pareto, index=df.index)
 
 
 def pct(value: float) -> str:
@@ -220,13 +246,13 @@ def write_report(path: Path, summary: pd.DataFrame, results: pd.DataFrame, args:
         "",
         "## Best Robust Configurations",
         "",
-        "| rank | train_universe | topk | n_drop | hold | mean annual | mean sharpe | min sharpe | sharpe std | worst drawdown | positive folds | rank_ic | rank_icir | sharpe_p |",
-        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| rank | train_universe | topk | n_drop | hold | mean annual | mean sharpe | min sharpe | sharpe std | worst drawdown | positive folds | rank_ic | rank_icir | sharpe_p | pareto |",
+        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for idx, (_, row) in enumerate(top.iterrows(), start=1):
         lines.append(
             "| {rank} | {universe} | {topk} | {n_drop} | {hold} | {annual} | {sharpe:.3f} | "
-            "{min_sharpe:.3f} | {sharpe_std:.3f} | {dd} | {pos}/{folds} | {rank_ic:.4f} | {rank_icir:.4f} | {sharpe_p} |".format(
+            "{min_sharpe:.3f} | {sharpe_std:.3f} | {dd} | {pos}/{folds} | {rank_ic:.4f} | {rank_icir:.4f} | {sharpe_p} | {pareto} |".format(
                 rank=idx,
                 universe=row["train_universe"],
                 topk=int(row["topk"]),
@@ -242,6 +268,7 @@ def write_report(path: Path, summary: pd.DataFrame, results: pd.DataFrame, args:
                 rank_ic=row["mean_rank_ic"],
                 rank_icir=row["mean_rank_icir"],
                 sharpe_p=f"{row['sharpe_ttest_pvalue']:.3f}" if not pd.isna(row.get("sharpe_ttest_pvalue", float("nan"))) else "nan",
+                pareto="✓" if row.get("pareto_front", False) else "",
             )
         )
 

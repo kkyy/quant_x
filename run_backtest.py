@@ -91,6 +91,8 @@ def main(
     explore_markets: bool = False,
     grid_workers: int = -1,
     output_csv: str = None,
+    slippage_sensitivity: bool = False,
+    slippage_multipliers: list = None,
 ):
     config = load_config(config_path)
     today = datetime.now().strftime("%Y-%m-%d")
@@ -234,6 +236,126 @@ def main(
             print("\n最优参数详细指标:")
             print(format_metrics(m))
 
+        # CAP-13: Slippage sensitivity analysis
+        if slippage_sensitivity and not results_df.empty:
+            best_params = GridSearchBacktest.best_params(results_df)
+            _run_slippage_sensitivity(
+                engine=engine,
+                pred_by_market={m: _predict_for_market(
+                    model=model,
+                    data_loader=data_loader,
+                    universe_filter=universe_filter,
+                    config=config,
+                    instruments=m,
+                    sector_provider=sector_provider,
+                    start=start,
+                    end=end,
+                    today=today,
+                ) for m in eval_markets},
+                best_params=best_params,
+                config=config,
+                start=start,
+                end=end,
+                multipliers=slippage_multipliers or [0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0],
+            )
+
+
+def _run_slippage_sensitivity(
+    engine,
+    pred_by_market: dict,
+    best_params: dict,
+    config: dict,
+    start: str = None,
+    end: str = None,
+    multipliers: list = None,
+):
+    """CAP-13: Run the best parameter set under varying transaction cost assumptions.
+
+    Prints a table of Sharpe / annual_return vs cost multiplier, and reports
+    the approximate break-even cost multiplier (where mean Sharpe crosses 0).
+
+    Parameters
+    ----------
+    engine        : BacktestEngine instance
+    pred_by_market: dict of market→pred Series
+    best_params   : dict from GridSearchBacktest.best_params() e.g. {"topk":10,"n_drop":3,...}
+    config        : merged config dict
+    multipliers   : list of floats, each applied to base open_cost and close_cost
+    """
+    if multipliers is None:
+        multipliers = [0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0]
+
+    from quant_ex.backtest.metrics import compute_metrics as _compute_metrics
+
+    bt_cfg = config.get("backtest", {})
+    base_open  = bt_cfg.get("open_cost",  0.0005)
+    base_close = bt_cfg.get("close_cost", 0.0015)
+
+    strategy_params = {
+        "topk":        best_params.get("topk", 10),
+        "n_drop":      best_params.get("n_drop", 3),
+        "hold_thresh": best_params.get("hold_thresh", 5),
+    }
+
+    rows = []
+    for mult in multipliers:
+        sharpe_list, ret_list = [], []
+        for market, pred in pred_by_market.items():
+            try:
+                report, _ = engine.run(
+                    pred=pred,
+                    strategy_params=strategy_params,
+                    start_time=start,
+                    end_time=end,
+                    open_cost=base_open * mult,
+                    close_cost=base_close * mult,
+                )
+                m = _compute_metrics(report)
+                sharpe_list.append(m.get("sharpe", float("nan")))
+                ret_list.append(m.get("annual_return", float("nan")))
+            except Exception as exc:
+                logger.warning("Slippage sensitivity backtest failed (mult=%.2f): %s", mult, exc)
+
+        import numpy as np
+        rows.append({
+            "cost_multiplier": mult,
+            "open_cost":  round(base_open  * mult, 6),
+            "close_cost": round(base_close * mult, 6),
+            "mean_sharpe": round(float(np.nanmean(sharpe_list)), 4) if sharpe_list else float("nan"),
+            "mean_annual_return": round(float(np.nanmean(ret_list)), 4)   if ret_list   else float("nan"),
+        })
+
+    df = pd.DataFrame(rows)
+    print("\n=== 滑点敏感性分析 (Slippage Sensitivity) ===")
+    print(f"  基准参数: {strategy_params}")
+    print(f"  基础成本: open={base_open:.4f}  close={base_close:.4f}")
+    print()
+    print(df.to_string(index=False))
+
+    # Break-even estimation by linear interpolation
+    valid = df.dropna(subset=["mean_sharpe"])
+    break_even = None
+    for i in range(len(valid) - 1):
+        s0 = valid.iloc[i]["mean_sharpe"]
+        s1 = valid.iloc[i + 1]["mean_sharpe"]
+        if s0 >= 0 >= s1 or s1 >= 0 >= s0:
+            m0 = valid.iloc[i]["cost_multiplier"]
+            m1 = valid.iloc[i + 1]["cost_multiplier"]
+            # linear interp: mult where sharpe = 0
+            be = m0 + (0 - s0) * (m1 - m0) / (s1 - s0) if s1 != s0 else m0
+            break_even = round(be, 3)
+            break
+
+    if break_even is not None:
+        print(f"\n  ⚠  Break-even cost multiplier ≈ {break_even}×  "
+              f"(open={base_open * break_even:.5f}, close={base_close * break_even:.5f})")
+    else:
+        # Check if always positive or always negative
+        if valid["mean_sharpe"].min() > 0:
+            print("\n  ✓ Sharpe 在所有成本假设下均为正，策略对交易成本具有较强鲁棒性")
+        else:
+            print("\n  ✗ Sharpe 在基准成本下即为负，信号质量存疑")
+
 
 def _predict_for_market(
     model,
@@ -351,6 +473,17 @@ if __name__ == "__main__":
         help="指定 grid search 结果输出 CSV 路径（默认: backtest_results/grid_{date}.csv）。"
              "walk-forward 模式下用此参数隔离每折结果，避免并行竞争。",
     )
+    parser.add_argument(
+        "--slippage-sensitivity",
+        action="store_true",
+        help="滑点敏感性分析：用最优参数在不同交易成本倍数下测试 Sharpe 变化（CAP-13）",
+    )
+    parser.add_argument(
+        "--slippage-multipliers",
+        type=str,
+        default=None,
+        help="滑点倍数列表（逗号分隔），默认 0,0.25,0.5,1,1.5,2,3,5",
+    )
     args = parser.parse_args()
 
     main(
@@ -369,4 +502,9 @@ if __name__ == "__main__":
         explore_markets=args.explore_markets,
         grid_workers=args.grid_workers,
         output_csv=args.output_csv,
+        slippage_sensitivity=args.slippage_sensitivity,
+        slippage_multipliers=(
+            [float(x) for x in args.slippage_multipliers.split(",")]
+            if args.slippage_multipliers else None
+        ),
     )

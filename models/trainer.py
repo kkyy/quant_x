@@ -28,8 +28,13 @@ logger = logging.getLogger(__name__)
 import importlib as _il
 for _m in ("lgbm_model", "linear_model", "xgb_model", "nn_model"):
     _il.import_module(f".{_m}", package=__name__.rsplit(".", 1)[0])
-for _f in ("sector_factors", "technical_factors", "factor_mining", "regime_features"):
-    _il.import_module(f"..features.{_f}", package=__name__.rsplit(".", 1)[0])
+for _f in ("sector_factors", "technical_factors", "factor_mining", "regime_features",
+           "csv_factor", "fundamental_factor"):
+    try:
+        _il.import_module(f"..features.{_f}", package=__name__.rsplit(".", 1)[0])
+    except ImportError as _e:
+        import logging as _logging
+        _logging.getLogger(__name__).debug("Optional factor module skipped: %s (%s)", _f, _e)
 
 
 def _sanitize_artifact_tag(tag: Optional[str]) -> Optional[str]:

@@ -194,6 +194,17 @@ experiment:
 
 自定义模型保存为 `models/*.pkl`（含 `_meta.json` 和 `_feature_importance.json` sidecar）。
 
+### 多周期标签（label_horizon）
+
+Alpha158 默认标签是 T+1 收益。可通过 `training.label_horizon` 改为 N 日远期收益（CAP-12）：
+
+```yaml
+training:
+  label_horizon: 5   # 标签 = Ref($close, -6) / Ref($close, -1) - 1
+```
+
+这对验证 `hold_thresh=5/10` 等较长持仓周期是否匹配信号衰减周期非常有用。
+
 ---
 
 ## 回测与网格搜索
@@ -226,6 +237,17 @@ experiment:
 ```bash
 ./.venv/bin/python run_backtest.py --model-path models/lgbm_xxx.pkl --output-csv results/my_run.csv
 ```
+
+滑点敏感性分析（CAP-13）：测试最优参数在不同交易成本假设下的表现：
+
+```bash
+./.venv/bin/python run_backtest.py \
+  --model-path models/lgbm_xxx.pkl \
+  --slippage-sensitivity \
+  --slippage-multipliers 0,0.5,1,2,3,5
+```
+
+输出包含 mean_sharpe vs cost_multiplier 表格，以及 break-even 成本倍数估计。
 
 回测结果列包含：`annual_return`, `sharpe`, `max_drawdown`, `calmar`, `win_rate`, `ic`, `icir`, `rank_ic`, `rank_icir`
 
@@ -269,7 +291,7 @@ experiment:
   --robust-weights '{"mean_sharpe": 1.0, "sharpe_std": -0.3, "min_sharpe": 0.5, "positive_sharpe_folds": 0.05}'
 ```
 
-汇总表包含 `sharpe_ttest_pvalue` 和 `return_ttest_pvalue` 统计显著性列。
+汇总表包含 `sharpe_ttest_pvalue` 和 `return_ttest_pvalue` 统计显著性列，以及 `pareto_front` 列标记在 `(mean_sharpe, min_sharpe)` 双目标 Pareto 前沿上的配置。
 
 输出目录结构：
 
@@ -420,6 +442,39 @@ signal:
 
 ---
 
+## 市场状态策略切换
+
+根据 `regime` 因子检测到的市场状态（calm_bull / calm_bear / volatile_bull / volatile_bear）动态调整 `topk` / `n_drop` / `hold_thresh`。
+
+在 `config/base.yaml` 中启用：
+
+```yaml
+strategy:
+  regime_switch:
+    enabled: true
+    rules:
+      0:  # calm_bull
+        topk: 15
+        n_drop: 3
+        hold_thresh: 5
+      1:  # calm_bear
+        topk: 10
+        n_drop: 1
+        hold_thresh: 8
+      2:  # volatile_bull
+        topk: 12
+        n_drop: 2
+        hold_thresh: 5
+      3:  # volatile_bear
+        topk: 8
+        n_drop: 1
+        hold_thresh: 10
+```
+
+`run_scheduled_rebalance.py` 和 `run_daily.py` 均会自动检测并应用。检测失败时静默回退到基础参数。
+
+---
+
 ## 流动性过滤
 
 在 `strategy.universe_filter` 小节配置（新增，默认禁用）：
@@ -548,6 +603,8 @@ quant_ex/
 │   ├── metrics.py                # 含基准超额、IR、换手率指标
 │   ├── signal_diagnostics.py     # IC 衰减、滚动 IC 监控
 │   └── attribution.py            # Brinson 绩效归因（新增）
+├── strategy/
+│   └── regime_switch.py          # 市场状态策略参数切换（新增）
 ├── signals/
 │   ├── generator.py              # 含停牌过滤、price_data 复用
 │   └── postprocess.py            # 含市值中性化
