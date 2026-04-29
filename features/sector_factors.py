@@ -74,8 +74,27 @@ class SectorFactorEngine(BaseFactor):
 
     # ── BaseFactor interface ───────────────────────────────────────────────────
 
+    def _ensure_compat_attrs(self) -> None:
+        """Backward-compat: old pickles may lack flags added after training."""
+        for attr, default in (
+            ("mom_windows", [5, 10, 20, 60]),
+            ("rev_windows", [5, 20]),
+            ("stock_vs_sector_windows", [5, 20]),
+            ("include_sector_momentum", True),
+            ("include_sector_relative", True),
+            ("include_stock_vs_sector", True),
+            ("include_sector_reversal", True),
+            ("include_sector_volatility", True),
+            ("include_sector_id", True),
+            ("include_concept", True),
+            ("include_concept_id", True),
+        ):
+            if not hasattr(self, attr):
+                setattr(self, attr, default)
+
     def compute(self, price_data: pd.DataFrame) -> Optional[pd.DataFrame]:
         """Return sector factor DataFrame (instrument, datetime) MultiIndex."""
+        self._ensure_compat_attrs()
         if not self.sector_map and not self.concept_map:
             logger.warning("SectorFactorEngine: sector_map and concept_map are both empty, skipping.")
             return None
