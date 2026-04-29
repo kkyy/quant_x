@@ -12,19 +12,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
+from .utils import code_to_qlib_instrument as _code_to_qlib  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 # Path to the crawler data file (relative to this file: ../crawler/data/)
 _CRAWLER_STOCKS_FILE = Path(__file__).parent.parent / "crawler" / "data" / "sector_stocks.json"
-
-
-def _code_to_qlib(code: str) -> str:
-    """Convert 6-digit stock code to qlib instrument format (SH/SZ/BJ prefix)."""
-    if code.startswith("6"):
-        return f"SH{code}"
-    if code.startswith(("8", "4")):
-        return f"BJ{code}"
-    return f"SZ{code}"
 
 
 class SectorDataProvider:
@@ -127,7 +120,7 @@ class SectorDataProvider:
         return self._fetch_from_registry()
 
     def _fetch_akshare(self) -> Optional[Dict[str, str]]:
-        """Fetch industry classification from akshare (东方财富)."""
+        """Fetch industry classification from akshare (东方财富), using concurrent requests."""
         try:
             import akshare as ak
         except ImportError:
@@ -135,18 +128,33 @@ class SectorDataProvider:
             return None
 
         try:
-            logger.info("Fetching sector data from akshare …")
-            industry_list = ak.stock_board_industry_name_em()
-            sector_map: Dict[str, str] = {}
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            for _, row in industry_list.iterrows():
-                name = row["板块名称"]
+            logger.info("Fetching sector data from akshare (concurrent) …")
+            industry_list = ak.stock_board_industry_name_em()
+            sector_names = industry_list["板块名称"].tolist()
+
+            sector_map: Dict[str, str] = {}
+            lock = __import__("threading").Lock()
+            errors = []
+
+            def _fetch_one(name: str):
                 try:
                     stocks = ak.stock_board_industry_cons_em(symbol=name)
+                    entries = {}
                     for _, sr in stocks.iterrows():
-                        sector_map[_code_to_qlib(str(sr["代码"]))] = name
+                        entries[_code_to_qlib(str(sr["代码"]))] = name
+                    return entries
                 except Exception as e:
                     logger.warning(f"  Skip sector '{name}': {e}")
+                    return {}
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = {pool.submit(_fetch_one, name): name for name in sector_names}
+                for future in as_completed(futures):
+                    entries = future.result()
+                    with lock:
+                        sector_map.update(entries)
 
             logger.info(
                 f"Fetched {len(sector_map)} stocks in "

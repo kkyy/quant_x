@@ -202,6 +202,11 @@ class FactorMiner:
     def _compute(self, expr: str) -> Optional[pd.Series]:
         """Evaluate a qlib expression, return Series or None."""
         try:
+            import qlib
+            from qlib.config import C as _C
+            if not getattr(_C, "provider_uri", None):
+                logger.warning("qlib is not initialized; skipping expression '%s'", expr)
+                return None
             from qlib.data import D
             datetimes = self.price_data.index.get_level_values("datetime")
             instruments = self.price_data.index.get_level_values("instrument").unique().tolist()
@@ -285,6 +290,10 @@ class MinedFactorLoader(BaseFactor):
         parts: List[pd.Series] = []
         for f in factors:
             try:
+                from qlib.config import C as _C
+                if not getattr(_C, "provider_uri", None):
+                    logger.warning("qlib is not initialized; skipping mined factor '%s'", f.get("name"))
+                    continue
                 from qlib.data import D
                 df = D.features(
                     instruments, [f["expression"]],

@@ -133,9 +133,10 @@ class SectorFactorEngine(BaseFactor):
                     pieces.append(f.stack().rename(f"stock_vs_sector_{w}d"))
 
             if self.include_sector_reversal:
-                for w in self.rev_windows:
-                    f = self._sector_reversal(rets, sector_s, w)
-                    pieces.append(f.stack().rename(f"sector_rev_{w}d"))
+                # Reversal = short momentum - long momentum (mean-reversion signal)
+                for w_short, w_long in zip(self.rev_windows, self.mom_windows[len(self.rev_windows):] or [self.mom_windows[-1]]):
+                    f = self._sector_reversal(rets, sector_s, w_short, w_long)
+                    pieces.append(f.stack().rename(f"sector_rev_{w_short}_{w_long}d"))
 
             if self.include_sector_volatility:
                 for w in [10, 20]:
@@ -202,9 +203,17 @@ class SectorFactorEngine(BaseFactor):
         return stock_ret - sector_ret
 
     def _sector_reversal(
-        self, rets: pd.DataFrame, sector_s: pd.Series, window: int
+        self, rets: pd.DataFrame, sector_s: pd.Series, window_short: int, window_long: int
     ) -> pd.DataFrame:
-        return -self._sector_momentum(rets, sector_s, window)
+        """Reversal = short-window sector momentum minus long-window sector momentum.
+
+        Captures mean-reversion after short-term over-reaction relative to
+        the longer-term trend.  A negative value (recent under-performance vs
+        longer trend) signals potential mean-reversion upward.
+        """
+        mom_short = self._sector_momentum(rets, sector_s, window_short)
+        mom_long  = self._sector_momentum(rets, sector_s, window_long)
+        return mom_short - mom_long
 
     def _sector_vol(
         self, rets: pd.DataFrame, sector_s: pd.Series, window: int
@@ -219,23 +228,25 @@ class SectorFactorEngine(BaseFactor):
         sector_s: pd.Series,
         agg: str = "mean",
     ) -> pd.DataFrame:
-        sectors = sector_s.unique()
-        sector_agg: Dict[str, pd.Series] = {}
+        """Map per-sector aggregate statistic back to each member stock.
 
-        for sec in sectors:
-            members = [c for c in sector_s[sector_s == sec].index if c in metric.columns]
-            if members:
-                if agg == "mean":
-                    sector_agg[sec] = metric[members].mean(axis=1)
-                elif agg == "std":
-                    sector_agg[sec] = metric[members].std(axis=1)
+        Vectorised implementation: O(dates × sectors) instead of the previous
+        O(sectors × instruments) double-loop.
+        """
+        # Align sector_s to metric columns (instruments present in price data)
+        aligned_sector = sector_s.reindex(metric.columns).fillna("Unknown")
 
-        result = pd.DataFrame(index=metric.index, columns=metric.columns, dtype=float)
-        for inst in metric.columns:
-            sec = sector_s.get(inst, "Unknown")
-            if sec in sector_agg:
-                result[inst] = sector_agg[sec]
+        if agg == "mean":
+            sector_agg = metric.T.groupby(aligned_sector).mean().T   # (dates × sectors)
+        elif agg == "std":
+            sector_agg = metric.T.groupby(aligned_sector).std().T
+        else:
+            raise ValueError(f"Unsupported agg='{agg}'")
 
+        # Broadcast sector stats back to individual instruments
+        # aligned_sector maps instrument → sector_name; sector_agg[sector_name] gives the value
+        result = sector_agg.reindex(columns=aligned_sector.values)
+        result.columns = metric.columns
         return result
 
     @staticmethod

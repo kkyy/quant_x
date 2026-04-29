@@ -1,10 +1,11 @@
 """Stock universe filtering."""
 from __future__ import annotations
-import json
 from pathlib import Path
 import pandas as pd
 from typing import List, Optional
 import logging
+
+from .utils import load_stock_names, code_to_qlib_instrument
 
 logger = logging.getLogger(__name__)
 
@@ -25,41 +26,20 @@ class UniverseFilter:
         self.cfg = strategy_config.get("universe_filter", {})
 
     def requires_price_data(self) -> bool:
-        return bool(self.cfg.get("min_price")) or bool(self.cfg.get("exclude_suspended", True))
+        return (
+            bool(self.cfg.get("min_price"))
+            or bool(self.cfg.get("exclude_suspended", True))
+            or bool(self.cfg.get("min_avg_volume"))
+            or bool(self.cfg.get("min_avg_amount"))
+        )
 
     def _load_stock_names(self) -> dict:
-        """Load {qlib_code: name} from sector_stocks.json for ST detection."""
-        path = Path(__file__).parent.parent / "crawler" / "data" / "sector_stocks.json"
-        if not path.exists():
-            return {}
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            names = {}
-            for category in data.values():
-                for sector in category.values():
-                    for stock in sector.get("stocks", []):
-                        code = stock.get("code", "")
-                        name = stock.get("name", "")
-                        if code and name:
-                            names[self._to_qlib_code(code)] = name
-            return names
-        except Exception:
-            return {}
+        """Load {qlib_code: name} using the shared cached loader."""
+        return load_stock_names()
 
     @staticmethod
     def _to_qlib_code(code: str) -> str:
-        code = str(code).strip()
-        if len(code) != 6 or not code.isdigit():
-            return code
-        prefix = int(code[0])
-        if prefix in (0, 2, 3):
-            return f"SZ{code}"
-        if prefix in (6, 9):
-            return f"SH{code}"
-        if prefix in (4, 8):
-            return f"BJ{code}"
-        return code
+        return code_to_qlib_instrument(code)
 
     def filter(
         self,
@@ -126,6 +106,52 @@ class UniverseFilter:
             if n_sus:
                 logger.info(f"Universe filter: excluded {int(n_sus)} suspended stocks (zero volume)")
             mask &= ~suspended
+
+        # 流动性下限：N 日平均成交量
+        min_avg_vol = self.cfg.get("min_avg_volume")
+        avg_vol_window = int(self.cfg.get("avg_volume_window", 20))
+        if min_avg_vol and price_data is not None and "$volume" in price_data.columns:
+            vol_series = price_data["$volume"].sort_index()
+            avg_vol = (
+                vol_series.reset_index()
+                .sort_values("datetime")
+                .groupby("instrument")["$volume"]
+                .apply(lambda s: s.tail(avg_vol_window).mean())
+            )
+            illiquid = pd.Series(
+                instrs.map(lambda c: avg_vol.get(c, 0) < min_avg_vol),
+                index=pred.index,
+            )
+            n_illiq = illiquid.sum()
+            if n_illiq:
+                logger.info(
+                    f"Universe filter: excluded {int(n_illiq)} stocks below "
+                    f"min_avg_volume={min_avg_vol} (window={avg_vol_window}d)"
+                )
+            mask &= ~illiquid
+
+        # 流动性下限：N 日平均成交额（元）
+        min_avg_amt = self.cfg.get("min_avg_amount")
+        avg_amt_window = int(self.cfg.get("avg_amount_window", 20))
+        if min_avg_amt and price_data is not None and "$amount" in price_data.columns:
+            amt_series = price_data["$amount"].sort_index()
+            avg_amt = (
+                amt_series.reset_index()
+                .sort_values("datetime")
+                .groupby("instrument")["$amount"]
+                .apply(lambda s: s.tail(avg_amt_window).mean())
+            )
+            illiquid_amt = pd.Series(
+                instrs.map(lambda c: avg_amt.get(c, 0) < min_avg_amt),
+                index=pred.index,
+            )
+            n_illiq_amt = illiquid_amt.sum()
+            if n_illiq_amt:
+                logger.info(
+                    f"Universe filter: excluded {int(n_illiq_amt)} stocks below "
+                    f"min_avg_amount={min_avg_amt} (window={avg_amt_window}d)"
+                )
+            mask &= ~illiquid_amt
 
         n_before, n_after = len(pred), int(mask.sum())
         logger.info(f"Universe filter: {n_before} → {n_after} stocks")

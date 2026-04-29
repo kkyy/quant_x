@@ -30,6 +30,49 @@ from quant_ex.notify.pusher import NotificationPusher
 logger = setup_logger("run_daily")
 
 
+def _check_concentration(data: dict, config: dict) -> None:
+    """Log warnings when any single position exceeds the concentration limit."""
+    positions = data.get("target_positions", {})
+    if not positions:
+        return
+    account = data.get("account_value", 1)
+    port_cfg = config.get("strategy", {}).get("portfolio", {})
+    max_pct = port_cfg.get("max_position_pct", 0.25)
+    hard_limit = port_cfg.get("concentration_hard_limit", None)
+
+    weights = {
+        inst: info["target_value"] / account
+        for inst, info in positions.items()
+        if account > 0
+    }
+    total_invested = sum(weights.values())
+    n = len(weights)
+
+    for inst, w in sorted(weights.items(), key=lambda x: -x[1]):
+        if w > max_pct:
+            logger.warning(
+                "集中度警告: %s 权重 %.1f%% 超过上限 %.1f%%", inst, w * 100, max_pct * 100
+            )
+        if hard_limit and w > hard_limit:
+            logger.error(
+                "集中度超限 [HARD LIMIT]: %s 权重 %.1f%% 超过硬上限 %.1f%%",
+                inst, w * 100, hard_limit * 100,
+            )
+
+    if n > 0:
+        herfindahl = sum(w ** 2 for w in weights.values())
+        effective_n = 1.0 / herfindahl if herfindahl > 0 else n
+        logger.info(
+            "集中度报告: %d 持仓, 有效分散数=%.1f, 总投入=%.1f%%",
+            n, effective_n, total_invested * 100,
+        )
+        if effective_n < n * 0.5:
+            logger.warning(
+                "集中度警告: 有效分散数 %.1f 低于持仓数 %d 的 50%%，组合过度集中",
+                effective_n, n,
+            )
+
+
 def parse_positions(s: str) -> dict:
     """Parse 'SH600000:500,SZ000001:300' → {'SH600000': 500, ...}"""
     if not s:
@@ -93,6 +136,22 @@ def main(
 
     # ── 生成信号 ──────────────────────────────────────────────────────────────
     acct = account or config.get("backtest", {}).get("account", 1_000_000)
+
+    # Pre-load price data once so SignalGenerator.generate() can reuse it
+    # instead of loading again internally (avoids 2-3× redundant qlib queries)
+    instruments = config.get("market", {}).get("name", "csi300")
+    if universe_filter.requires_price_data():
+        tcfg2 = config.get("training", {})
+        price_start = tcfg2.get("test_start", "2024-01-01")
+        price_data = data_loader.load_price_data(
+            instruments=instruments,
+            start_time=price_start,
+            end_time=today,
+        )
+        logger.info(f"Pre-loaded price_data: {len(price_data)} rows")
+    else:
+        price_data = None
+
     sig_gen = SignalGenerator(config, data_loader, universe_filter, sector_provider)
     data = sig_gen.generate(
         model=model,
@@ -100,9 +159,14 @@ def main(
         current_positions=current_positions or {},
         account_value=acct,
         trade_date=today,
+        price_data=price_data,
     )
 
     report = sig_gen.format_report(data)
+
+    # ── 集中度风险检查 ────────────────────────────────────────────────────────
+    _check_concentration(data, config)
+
     print(report)
 
     # ── 保存到文件 ────────────────────────────────────────────────────────────

@@ -10,7 +10,6 @@ Workflow:
 6. Format human-readable report
 """
 from __future__ import annotations
-import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +18,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from .postprocess import postprocess_signal
+from ..data.utils import load_stock_names, code_to_qlib_instrument
 
 logger = logging.getLogger(__name__)
 
@@ -41,40 +41,13 @@ class SignalGenerator:
     # ── public ────────────────────────────────────────────────────────────────
 
     def _load_stock_names(self) -> Dict[str, str]:
-        """Load stock name mapping from sector_stocks.json."""
-        path = Path(__file__).parent.parent / "crawler" / "data" / "sector_stocks.json"
-        if not path.exists():
-            return {}
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            names = {}
-            for category in data.values():
-                for sector in category.values():
-                    for stock in sector.get("stocks", []):
-                        code = stock.get("code", "")
-                        name = stock.get("name", "")
-                        if code and name:
-                            names[self._to_qlib_code(code)] = name
-            return names
-        except Exception as e:
-            logger.warning(f"Failed to load stock names: {e}")
-            return {}
+        """Load stock name mapping using the shared cached loader."""
+        return load_stock_names()
 
     @staticmethod
     def _to_qlib_code(code: str) -> str:
         """Convert 6-digit numeric code to qlib format (SH/SZ prefix)."""
-        code = str(code).strip()
-        if len(code) != 6 or not code.isdigit():
-            return code
-        prefix = int(code[0])
-        if prefix in (0, 2, 3):
-            return f"SZ{code}"
-        if prefix in (6, 9):
-            return f"SH{code}"
-        if prefix in (4, 8):
-            return f"BJ{code}"
-        return code
+        return code_to_qlib_instrument(code)
 
     def generate(
         self,
@@ -83,6 +56,7 @@ class SignalGenerator:
         current_positions: Optional[Dict[str, float]] = None,
         account_value: float = 1_000_000,
         trade_date: Optional[str] = None,
+        price_data: Optional[pd.DataFrame] = None,
     ) -> Dict[str, Any]:
         """
         Generate trading signals.
@@ -93,6 +67,9 @@ class SignalGenerator:
             current_positions: {instrument: shares_held}
             account_value:     Current portfolio value in CNY
             trade_date:        Date string (default: today)
+            price_data:        Pre-loaded price DataFrame (avoids redundant loads).
+                               When provided this is used for both universe filtering
+                               and price fetching; no extra qlib calls are made.
 
         Returns:
             Signal dict with keys: date, top_stocks, sector_info,
@@ -101,10 +78,12 @@ class SignalGenerator:
         trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
 
         pred = model.predict(dataset, segment="test")
-        price_data = None
 
         if self.universe_filter is not None:
-            if self.universe_filter.requires_price_data():
+            if price_data is not None:
+                # Caller pre-loaded price data — use directly
+                pred = self.universe_filter.filter(pred, price_data=price_data)
+            elif self.universe_filter.requires_price_data():
                 start_time = pred.index.get_level_values("datetime").min().strftime("%Y-%m-%d")
                 price_data = self.data_loader.load_price_data(
                     instruments=self.config.get("market", {}).get("name", "csi300"),
@@ -128,6 +107,20 @@ class SignalGenerator:
         all_insts = list(dict.fromkeys(list(top_stocks.index) + list((current_positions or {}).keys())))
         prices = self._fetch_prices(all_insts, trade_date, price_data=price_data)
 
+        # BUG-07 fix: build a set of suspended instruments (zero latest volume)
+        suspended: set = set()
+        if price_data is not None and "$volume" in price_data.columns:
+            vol = price_data["$volume"].sort_index()
+            latest_vol = (
+                vol.reset_index()
+                .sort_values("datetime")
+                .groupby("instrument")["$volume"]
+                .last()
+            )
+            suspended = {inst for inst in all_insts if latest_vol.get(inst, 1) == 0}
+            if suspended:
+                logger.info(f"SignalGenerator: skipping {len(suspended)} suspended stocks in target positions")
+
         sector_info: Dict[str, str] = {}
         if self.sector_provider is not None:
             sm = self.sector_provider.get_map()
@@ -136,7 +129,7 @@ class SignalGenerator:
         stock_names = self._load_stock_names()
         name_info = {i: stock_names.get(i, "") for i in top_stocks.index}
 
-        target_positions = self._target_positions(top_stocks, prices, account_value)
+        target_positions = self._target_positions(top_stocks, prices, account_value, suspended=suspended)
         signals = self._diff_signals(target_positions, current_positions or {}, prices)
 
         return {
@@ -254,6 +247,7 @@ class SignalGenerator:
         prices: Dict[str, float],
         account_value: float,
         lot_size: int = 100,
+        suspended: Optional[set] = None,
     ) -> Dict[str, Dict]:
         port_cfg = self.config.get("strategy", {}).get("portfolio", {})
         max_pct = port_cfg.get("max_position_pct", 0.25)
@@ -262,6 +256,10 @@ class SignalGenerator:
 
         positions = {}
         for inst, score in top_stocks.items():
+            # Skip suspended stocks (BUG-07): even if price > 0, we can't trade
+            if suspended and inst in suspended:
+                logger.debug(f"Skipping suspended stock {inst} from target positions")
+                continue
             price = prices.get(inst, 0)
             if price <= 0:
                 continue

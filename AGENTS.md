@@ -6,10 +6,16 @@
 
 `quant_ex` 是基于 qlib + Alpha158 的 A 股量化选股框架，支持：
 
-- 多模型训练：qlib-native `LGBModel` 与自定义 `lgbm` / `xgb` / `ridge` / `lasso`
-- 额外因子：技术因子、行业/概念轮动因子、挖掘因子
+- 多模型训练：qlib-native `LGBModel` 与自定义 `lgbm` / `xgb` / `ridge` / `lasso` / `mlp`
+- 额外因子：技术因子、行业/概念轮动因子、挖掘因子、市场状态感知因子（regime）
+- FactorScreener：IC/ICIR 阈值 + 相关性去重，自动过滤低质量因子
 - TopkDropout 策略回测、网格搜索、多 seed 稳健性评估
+- Walk-forward 时间交叉验证（支持自定义折叠 YAML、t 检验显著性）
 - 每日信号生成、目标持仓与买卖差分
+- 集中度风险检查、流动性过滤
+- 信号后处理：行业中性化、市值中性化
+- Brinson 绩效归因（板块级 allocation/selection/interaction）
+- IC 衰减分析、滚动 IC 监控
 - 多渠道通知推送
 - 东方财富数据 SDK 与板块/成分股缓存
 - Claude API 驱动的回测参数自动优化
@@ -21,15 +27,13 @@
   - 该环境已包含 pandas、numpy、sklearn、lightgbm 等常用依赖，适合做语法、导入和轻量测试。
   - 当前项目自己的 `.venv` 可能未安装完整依赖，不要默认依赖它。
 - qlib 数据路径：`/Users/weidian/code/algorithms/investment_data/qlib_data/qlib_bin`
-- 安装依赖：
-  - `pip install -r requirements.txt`
-  - 或开发安装：`pip install -e .[dev]`
+- 安装依赖：`pip install -r requirements.txt` 或 `pip install -e .[dev]`
 
 涉及网络、下载依赖、外部 API、真实推送、真实资金/实盘语义的操作，应先确认用户意图。不要把 API key、通知凭证、账号信息写入入库文件。
 
 ## 常用命令
 
-优先使用上述推荐 Python 解释器运行检查，例如：
+优先使用上述推荐 Python 解释器运行检查：
 
 ```bash
 /Users/weidian/code/algorithms/Qbot/.venv/bin/python3.9 -m pytest test/test_universe_filter.py test/test_trainer.py
@@ -41,7 +45,7 @@
 python run_train.py --model lgbm --tag baseline
 python run_train.py --model lgbm --with-sector --tag sector_full
 python run_train.py --qlib-native
-python run_train.py --list-registry
+python run_train.py --list-registry    # 验证模型/因子注册（含 regime）
 ```
 
 回测：
@@ -49,7 +53,24 @@ python run_train.py --list-registry
 ```bash
 python run_backtest.py --model-path models/lgbm_*.pkl
 python run_backtest.py --topk 5,10,15 --n-drop 1,3,5 --seeds
+python run_backtest.py --output-csv results/my_run.csv  # 指定输出路径
 python run_backtest.py --optimize --n-iters 3
+```
+
+Walk-forward：
+
+```bash
+python run_walk_forward_validation.py \
+  --train-universes csi300,csi800,csi1000 \
+  --eval-market csi300 \
+  --topk 5,15,20 --n-drop 1,3 --hold-thresh 5,8,10
+
+# 自定义折叠（--folds-config）
+python run_walk_forward_validation.py --folds-config config/walk_forward_folds.yaml
+
+# 调整稳健得分权重
+python run_walk_forward_validation.py \
+  --robust-weights '{"mean_sharpe": 1.0, "sharpe_std": -0.3, "min_sharpe": 0.5, "positive_sharpe_folds": 0.05}'
 ```
 
 每日信号：
@@ -74,110 +95,113 @@ black .
 
 ## 目录职责
 
-- `config/`：配置文件。`base.yaml` 放 qlib 路径、市场、训练区间、实验、路径、回测/策略等基础配置；`model.yaml` 放模型和因子配置；`notify.yaml.example` 是通知配置模板。
-- `data/`：qlib 数据加载、股票池过滤、行业数据提供。
-- `features/`：因子注册、技术因子、行业因子、挖掘因子。
-- `models/`：模型基类、注册表、训练器及各模型实现；也可能存在模型元信息文件。
-- `backtest/`：回测引擎、指标、网格搜索。
-- `signals/`：信号生成逻辑；运行后可能输出信号文件，注意不要提交生成产物。
-- `notify/`：通知推送通道。
-- `crawler/`：东方财富 API SDK、脚本和缓存数据；该模块应尽量保持独立，不引入 qlib 依赖。
-- `agent/`：AI 参数优化器。
+- `config/`：配置文件。`base.yaml` 放 qlib 路径、市场、训练区间、策略、回测；`model.yaml` 放模型和因子配置；`walk_forward_folds.yaml.example` 是自定义折叠示例；`notify.yaml.example` 是通知配置模板。
+- `data/`：qlib 数据加载、股票池过滤（含流动性过滤）、行业数据提供；`utils.py` 是统一代码转换+缓存模块。
+- `features/`：因子基类、注册表、技术因子、行业因子、挖掘因子（含 qlib init 保护）、市场状态因子；`library/` 含 FactorScreener / FactorCleaner / FactorEvaluator。
+- `models/`：模型基类、注册表、训练器及各模型实现；训练产物含 `_meta.json` 和 `_feature_importance.json` sidecar。
+- `backtest/`：回测引擎、指标（含基准超额/IR/换手率）、网格搜索、信号诊断（IC 衰减/滚动 IC）、Brinson 归因。
+- `signals/`：信号生成（含停牌过滤/price_data 复用）、后处理（含市值中性化）。
+- `notify/`：通知推送渠道。
+- `crawler/`：东方财富 API SDK，应保持独立，不引入 qlib 依赖。
+- `agent/`：AI 参数优化器（Claude API）。
 - `test/`：pytest 测试。
-- `notebooks/`：实验笔记本；`.gitignore` 默认忽略 `*.ipynb`，编辑前注意用户是否有未提交的本地实验内容。
 
 ## 架构与数据流
 
-配置深度合并顺序以代码为准：
+配置深度合并顺序：
 
 ```text
-config/base.yaml -> config/model.yaml -> config/strategy.yaml(若存在，兼容旧版) -> config/notify.yaml(若存在) -> 用户自定义配置
+config/base.yaml → config/model.yaml → config/notify.yaml(若存在) → 用户自定义配置(--config)
 ```
-
-当前仓库通常不再使用 `strategy.yaml`，策略、回测和股票池过滤参数应优先维护在 `config/base.yaml`。
 
 核心数据流：
 
 ```text
 DataLoader(qlib D.features / DatasetH)
-  -> UniverseFilter
-  -> SectorDataProvider(akshare / cache)
-  -> Alpha158 + FactorPipeline
-  -> ModelTrainer(qlib-native 或 custom)
-  -> BacktestEngine / GridSearchBacktest
-  -> SignalGenerator
-  -> NotificationPusher
+  → UniverseFilter (含流动性过滤)
+  → SectorDataProvider(akshare / cache, 并发抓取)
+  → Alpha158 + FactorPipeline [technical, sector, mined, regime]
+      → (可选) FactorScreener
+  → ModelTrainer (qlib-native 或 custom, 支持 bootstrap bagging)
+  → BacktestEngine / GridSearchBacktest → AutoOptimizer (Claude)
+  → SignalGenerator (price_data 复用, 停牌过滤)
+      → postprocess (industry_neutralize / size_neutralize)
+      → 集中度风险检查
+  → NotificationPusher
+  → (可选) brinson_attribution
 ```
 
 两种训练模式：
-
-- `--qlib-native`：使用 qlib 原生 `LGBModel`，通过 MLflow recorder 追踪。训练完成后把 Recorder ID 写入 `config/base.yaml` 的 `experiment.latest_recorder_id`。
-- 默认 custom 模式：使用项目内模型注册表，模型保存为 `models/*.pkl`，后续通过 `--model-path` 传给回测或每日信号脚本。
+- `--qlib-native`：qlib 原生 `LGBModel`，MLflow recorder 追踪。训练后把 Recorder ID 写入 `config/base.yaml → experiment.latest_recorder_id`。
+- 默认 custom 模式：注册表模型，保存为 `models/*.pkl`，后续通过 `--model-path` 使用。
 
 ## 开发约定
 
 ### 注册表模式
 
-新增模型：
+新增模型：继承 `BaseAlphaModel`，实现 `fit()` / `predict()`，`@ModelRegistry.register("name")`，放在 `models/`。
 
-- 放在 `models/`
-- 继承 `BaseAlphaModel`
-- 实现 `fit()` 和 `predict()`
-- 使用 `@ModelRegistry.register("name")`
-- 保持模型配置位于 `config/model.yaml` 对应小节
+新增因子：继承 `BaseFactor`，实现 `compute(price_data) → DataFrame`（必须返回 `(instrument, datetime)` MultiIndex），`@FactorRegistry.register("name")`，放在 `features/`，在 `config/model.yaml → features.factors` 中添加配置项，并在 `models/trainer.py` 的 `importlib` 循环中注册模块名。
 
-新增因子：
+验证注册：
 
-- 放在 `features/`
-- 继承 `BaseFactor`
-- 实现 `compute(price_data) -> DataFrame`
-- 返回结果必须使用 `(instrument, datetime)` MultiIndex
-- 使用 `@FactorRegistry.register("name")`
-- 在 `config/model.yaml -> model.features.factors` 中添加配置项
+```bash
+python run_train.py --list-registry
+```
 
-`ModelTrainer.__init__` 会通过 `importlib` 自动导入模型和因子模块。新增文件后优先用 `python run_train.py --list-registry` 验证注册是否生效。
+预期因子注册包含：`sector, technical, mined, regime`
 
-### 因子流水线
+### 因子流水线与 FactorScreener
 
-`FactorPipeline` 从配置列表构建，每个 entry 的 `name` 必须匹配因子注册 key，其余字段作为因子构造参数传入。
+`FactorPipeline.from_config()` 支持 `screener_config` 参数，自动构建 `FactorScreener`：
 
-行业因子需要同时满足：
+```python
+pipeline = FactorPipeline.from_config(
+    factor_configs,
+    screener_config={"min_ic": 0.02, "min_icir": 0.3, "max_corr": 0.7},
+)
+kept = pipeline.compute_with_screening(price_data, forward_returns=label)
+```
 
-- CLI 使用 `--with-sector`
-- `config/model.yaml -> model.features.factors` 中启用 `sector` entry
+`pipeline.compute_with_cleaning(price_data, cleaner)` 用于后期清洗（winsorize/standardize）。
 
-挖掘因子需要先运行 `run_factor_mining.py` 生成 `cache/mined_factors.json`，再启用 `mined` entry。
+### 新增能力的模块位置
+
+| 能力 | 模块 |
+|---|---|
+| 市场状态感知因子 | `features/regime_features.py` |
+| 因子质量过滤 | `features/library/screener.py` |
+| 市值中性化 | `signals/postprocess.neutralize_by_size()` |
+| 流动性过滤 | `data/universe.UniverseFilter` (`min_avg_volume`/`min_avg_amount`) |
+| 集中度风险检查 | `run_daily._check_concentration()` |
+| Brinson 绩效归因 | `backtest/attribution.brinson_attribution()` |
+| IC 衰减分析 | `backtest/signal_diagnostics.compute_ic_decay()` |
+| 滚动 IC 监控 | `backtest/signal_diagnostics.compute_rolling_ic()` |
+| Walk-forward 统计显著性 | `run_walk_forward_validation.summarize()` (`sharpe_ttest_pvalue`) |
+| 自定义折叠 YAML | `run_walk_forward_validation.load_folds()` |
+| Bootstrap Bagging | `LGBMAlphaModel(bagging_fraction=0.8)` |
+
+### 向后兼容原则
+
+- 新增参数必须有 `None` 或合理默认值，不破坏现有代码。
+- 旧 `.pkl` 模型通过 `__setstate__` + `_ensure_runtime_defaults()` 补全缺失属性。
+- 新配置项默认不启用（如 `size_neutralize: false`, `min_avg_volume: null`）。
 
 ### 配置与敏感文件
 
 - 不要提交 `config/notify.yaml`、`.env`、`config/local*.yaml`、`config/secret*.yaml`。
-- 修改默认配置时，优先保持样例可运行，不要把个人凭证、临时绝对输出路径或一次性实验参数写死。
-- qlib 数据路径当前是本机绝对路径；若为通用化改动，应说明兼容影响。
+- qlib 数据路径当前是本机绝对路径；通用化改动应说明兼容影响。
 
-### 生成产物
+### 生成产物（不应提交）
 
-以下目录/文件通常是运行产物或缓存，不应作为普通代码改动提交：
-
-- `cache/`
-- `logs/`
-- `mlruns/`
-- `mlartifacts/`
-- `qlib_workflow/`
-- `backtest_results/`
-- `optimization_results/`
-- `signals/*.txt`
-- `*.pkl` / `*.joblib`
+`cache/`, `logs/`, `mlruns/`, `mlartifacts/`, `qlib_workflow/`, `backtest_results/`, `optimization_results/`, `signals/*.txt`, `*.pkl`, `*.joblib`
 
 ## 测试与验证
 
-修改后按风险选择验证范围：
-
 - 配置、注册表、轻量逻辑改动：运行相关单测和 `--list-registry`。
-- 模型、因子、数据集构建改动：至少做导入检查和针对性单测；如依赖 qlib 数据，使用本机 qlib 路径运行最小脚本。
-- 回测、信号、通知改动：优先使用 `--dry-run` 或小范围参数验证，避免真实推送。
-- 爬虫改动：优先测试 SDK 参数构造、解析和缓存逻辑；真实请求需要用户允许或明确请求。
-
-建议基础检查：
+- 模型、因子、数据集改动：导入检查 + 针对性单测；依赖 qlib 数据时使用本机路径运行最小脚本。
+- 回测、信号、通知改动：优先 `--dry-run` 或小参数验证，避免真实推送。
+- 爬虫改动：优先测试 SDK 构造、解析和缓存；真实请求需用户允许。
 
 ```bash
 /Users/weidian/code/algorithms/Qbot/.venv/bin/python3.9 -m pytest test/test_universe_filter.py test/test_trainer.py
@@ -191,26 +215,25 @@ DataLoader(qlib D.features / DatasetH)
 - 优先使用项目已有工具：`utils.config.load_config`、`utils.logger.setup_logger`、注册表、数据加载器和基类。
 - 不做无关重构，不批量格式化未触及文件。
 - 处理日期、股票代码、MultiIndex 时要谨慎，避免隐式改变 qlib 期望格式。
-- 对外部服务、文件缓存、模型文件和回测输出增加错误处理时，保持失败信息可读且便于定位。
 
 ## 东方财富 Crawler
 
-`crawler/eastmoney/` 是独立 SDK，不依赖 qlib。直接连接通常可用，代理可能导致空回复。
-
-刷新缓存：
+`crawler/eastmoney/` 是独立 SDK，不依赖 qlib。**直连可用，代理可能导致空回复（exit 52）**。
 
 ```bash
 python crawler/scripts/fetch_sector_enums.py
 python crawler/scripts/fetch_sector_stocks.py --resume
 ```
 
-修改 crawler 时，尽量不要让主训练/回测路径强依赖实时网络；应继续支持缓存或离线数据。
+修改 crawler 时，不要让主训练/回测路径强依赖实时网络；继续支持缓存/离线数据。
 
 ## AI 优化器
 
-`agent/auto_optimizer.py` 使用 Anthropic API 分析网格搜索 CSV 并建议下一轮参数。运行 `run_backtest.py --optimize` 前需要 `ANTHROPIC_API_KEY`。
+`agent/auto_optimizer.py` 使用 Anthropic API 分析网格搜索 CSV 并建议下一轮参数。运行前需要 `ANTHROPIC_API_KEY`。
 
-除非用户明确要求，不要改写优化器使用的模型、密钥读取方式或把密钥写入配置文件。
+```bash
+python run_backtest.py --optimize --n-iters 3
+```
 
 ## 协作注意事项
 

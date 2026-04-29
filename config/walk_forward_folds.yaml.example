@@ -1,0 +1,30 @@
+# Custom walk-forward fold definitions.
+# Copy this file, remove the .example extension, and pass via:
+#   python run_walk_forward_validation.py --folds-config config/walk_forward_folds.yaml
+#
+# Omit --folds-config to use the built-in 7-fold 2020-2026 schedule.
+
+folds:
+  - name: test_2022
+    fit_start:   "2015-01-01"
+    fit_end:     "2020-12-31"
+    valid_start: "2021-01-01"
+    valid_end:   "2021-12-31"
+    test_start:  "2022-01-01"
+    test_end:    "2022-12-31"
+
+  - name: test_2023
+    fit_start:   "2015-01-01"
+    fit_end:     "2021-12-31"
+    valid_start: "2022-01-01"
+    valid_end:   "2022-12-31"
+    test_start:  "2023-01-01"
+    test_end:    "2023-12-31"
+
+  - name: test_2024
+    fit_start:   "2015-01-01"
+    fit_end:     "2021-12-31"
+    valid_start: "2022-01-01"
+    valid_end:   "2023-12-31"
+    test_start:  "2024-01-01"
+    test_end:    "2024-12-31"

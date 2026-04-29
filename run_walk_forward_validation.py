@@ -10,14 +10,13 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as _cf
 import json
-import shutil
 import subprocess
 import sys
 import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, List, Optional
 
 import pandas as pd
 import yaml
@@ -88,7 +87,34 @@ def write_fold_config(path: Path, fold: Fold, train_universe: str) -> None:
     path.write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
-def newest_model_for_tag(tag: str, after: float) -> Path:
+def load_folds(folds_config: Optional[str]) -> list:
+    """Return fold list from a YAML file, or DEFAULT_FOLDS if not provided.
+
+    YAML format::
+
+        folds:
+          - name: custom_2023
+            fit_start:   "2015-01-01"
+            fit_end:     "2021-12-31"
+            valid_start: "2022-01-01"
+            valid_end:   "2022-12-31"
+            test_start:  "2023-01-01"
+            test_end:    "2023-12-31"
+    """
+    if not folds_config:
+        return list(DEFAULT_FOLDS)
+    path = Path(folds_config)
+    if not path.exists():
+        raise FileNotFoundError(f"--folds-config file not found: {path}")
+    with path.open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    raw = data.get("folds", data)  # allow top-level list or dict with 'folds' key
+    if not isinstance(raw, list):
+        raise ValueError("folds_config YAML must contain a 'folds' list")
+    return [Fold(**f) for f in raw]
+
+
+
     candidates = [
         path for path in (REPO_ROOT / "models").glob(f"lgbm_{tag}_*.pkl")
         if path.stat().st_mtime >= after
@@ -100,38 +126,73 @@ def newest_model_for_tag(tag: str, after: float) -> Path:
     return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
-def latest_grid_csv() -> Path:
-    candidates = list((REPO_ROOT / "backtest_results").glob("grid_*.csv"))
-    if not candidates:
-        raise FileNotFoundError("No backtest grid CSV found")
-    return max(candidates, key=lambda path: path.stat().st_mtime)
+def summarize(
+    results: pd.DataFrame,
+    robust_weights: Optional[dict] = None,
+) -> pd.DataFrame:
+    """Aggregate fold results.
 
+    Args:
+        results:        All-fold results DataFrame.
+        robust_weights: Optional dict of scoring weights, e.g.
+                        {"mean_sharpe": 1.0, "sharpe_std": -0.5,
+                         "min_sharpe": 0.2, "positive_sharpe_folds": 0.05}.
+                        Defaults to the historically chosen values.
 
-def summarize(results: pd.DataFrame) -> pd.DataFrame:
+    Statistical significance (GAP-04):
+        ``sharpe_ttest_pvalue`` — one-sample t-test H0: mean(sharpe) = 0.
+        ``return_ttest_pvalue`` — one-sample t-test H0: mean(annual_return) = 0.
+        Both are NaN when fewer than 2 folds are available.
+    """
+    from scipy import stats as _stats
+
+    w = robust_weights or {
+        "mean_sharpe": 1.0,
+        "sharpe_std": -0.5,
+        "min_sharpe": 0.2,
+        "positive_sharpe_folds": 0.05,
+    }
     group_cols = ["train_universe", "eval_market", "topk", "n_drop", "hold_thresh"]
     rows = []
     for keys, group in results.groupby(group_cols, dropna=False):
         row = dict(zip(group_cols, keys))
+
+        sharpe_vals = group["sharpe"].dropna()
+        ret_vals    = group["annual_return"].dropna()
+
+        # One-sample t-test: H0 = 0
+        if len(sharpe_vals) >= 2:
+            _, sharpe_p = _stats.ttest_1samp(sharpe_vals, popmean=0.0)
+        else:
+            sharpe_p = float("nan")
+
+        if len(ret_vals) >= 2:
+            _, ret_p = _stats.ttest_1samp(ret_vals, popmean=0.0)
+        else:
+            ret_p = float("nan")
+
         row.update(
             folds=int(group["fold"].nunique()),
-            mean_annual_return=group["annual_return"].mean(),
-            median_annual_return=group["annual_return"].median(),
-            mean_sharpe=group["sharpe"].mean(),
-            median_sharpe=group["sharpe"].median(),
-            min_sharpe=group["sharpe"].min(),
-            sharpe_std=group["sharpe"].std(ddof=0),
+            mean_annual_return=ret_vals.mean(),
+            median_annual_return=ret_vals.median(),
+            mean_sharpe=sharpe_vals.mean(),
+            median_sharpe=sharpe_vals.median(),
+            min_sharpe=sharpe_vals.min(),
+            sharpe_std=sharpe_vals.std(ddof=0),
             mean_max_drawdown=group["max_drawdown"].mean(),
             worst_max_drawdown=group["max_drawdown"].min(),
             positive_return_folds=int((group["annual_return"] > 0).sum()),
             positive_sharpe_folds=int((group["sharpe"] > 0).sum()),
             mean_rank_ic=group["rank_ic"].mean() if "rank_ic" in group else float("nan"),
             mean_rank_icir=group["rank_icir"].mean() if "rank_icir" in group else float("nan"),
+            sharpe_ttest_pvalue=sharpe_p,
+            return_ttest_pvalue=ret_p,
         )
         row["robust_score"] = (
-            row["mean_sharpe"]
-            - 0.5 * row["sharpe_std"]
-            + 0.2 * row["min_sharpe"]
-            + 0.05 * row["positive_sharpe_folds"]
+            w.get("mean_sharpe", 1.0)           * row["mean_sharpe"]
+            + w.get("sharpe_std", -0.5)         * row["sharpe_std"]
+            + w.get("min_sharpe", 0.2)          * row["min_sharpe"]
+            + w.get("positive_sharpe_folds", 0.05) * row["positive_sharpe_folds"]
         )
         rows.append(row)
     return pd.DataFrame(rows).sort_values(
@@ -159,13 +220,13 @@ def write_report(path: Path, summary: pd.DataFrame, results: pd.DataFrame, args:
         "",
         "## Best Robust Configurations",
         "",
-        "| rank | train_universe | topk | n_drop | hold | mean annual | mean sharpe | min sharpe | sharpe std | worst drawdown | positive folds | rank_ic | rank_icir |",
-        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| rank | train_universe | topk | n_drop | hold | mean annual | mean sharpe | min sharpe | sharpe std | worst drawdown | positive folds | rank_ic | rank_icir | sharpe_p |",
+        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for idx, (_, row) in enumerate(top.iterrows(), start=1):
         lines.append(
             "| {rank} | {universe} | {topk} | {n_drop} | {hold} | {annual} | {sharpe:.3f} | "
-            "{min_sharpe:.3f} | {sharpe_std:.3f} | {dd} | {pos}/{folds} | {rank_ic:.4f} | {rank_icir:.4f} |".format(
+            "{min_sharpe:.3f} | {sharpe_std:.3f} | {dd} | {pos}/{folds} | {rank_ic:.4f} | {rank_icir:.4f} | {sharpe_p} |".format(
                 rank=idx,
                 universe=row["train_universe"],
                 topk=int(row["topk"]),
@@ -180,6 +241,7 @@ def write_report(path: Path, summary: pd.DataFrame, results: pd.DataFrame, args:
                 folds=int(row["folds"]),
                 rank_ic=row["mean_rank_ic"],
                 rank_icir=row["mean_rank_icir"],
+                sharpe_p=f"{row['sharpe_ttest_pvalue']:.3f}" if not pd.isna(row.get("sharpe_ttest_pvalue", float("nan"))) else "nan",
             )
         )
 
@@ -217,6 +279,7 @@ def _run_one_fold_universe(
 ) -> "pd.DataFrame":
     """Train + backtest one (fold, train_universe) combination.
 
+    Each fold writes its backtest CSV to an isolated path (no global file race).
     Returns a DataFrame with result rows annotated with fold metadata.
     """
     python = Path(args.python)
@@ -248,6 +311,9 @@ def _run_one_fold_universe(
         f"=== Backtest {tag} on {args.eval_market} {fold.test_start}..{fold.test_end} ===",
         flush=True,
     )
+    fold_results_dir.mkdir(parents=True, exist_ok=True)
+    dest = fold_results_dir / f"{tag}_on_{args.eval_market}.csv"
+
     backtest_cmd = [
         str(python),
         "run_backtest.py",
@@ -269,15 +335,19 @@ def _run_one_fold_universe(
         fold.test_end,
         "--grid-workers",
         str(args.grid_workers),
+        "--output-csv",       # ← isolated path avoids parallel race condition
+        str(dest),
     ]
     if args.seeds:
         backtest_cmd.append("--seeds")
     run_command(backtest_cmd, logs_dir / f"{tag}_backtest.log")
 
-    grid_path = latest_grid_csv()
-    fold_results_dir.mkdir(parents=True, exist_ok=True)
-    dest = fold_results_dir / f"{tag}_on_{args.eval_market}.csv"
-    shutil.copy2(grid_path, dest)
+    # run_backtest.py wrote directly to `dest` via --output-csv; read it.
+    if not dest.exists():
+        raise FileNotFoundError(
+            f"Expected backtest CSV at {dest} but it was not created. "
+            "Check the backtest log for errors."
+        )
 
     frame = pd.read_csv(dest)
     frame.insert(0, "model_path", str(model_path.relative_to(REPO_ROOT)))
@@ -296,10 +366,12 @@ def run_validation(args: argparse.Namespace) -> Path:
     out_dir = REPO_ROOT / "optimization_results" / f"walk_forward_{run_id}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    folds: List[Fold] = load_folds(getattr(args, "folds_config", None))
+
     metadata = {
         "run_id": run_id,
         "args": vars(args),
-        "folds": [fold.__dict__ for fold in DEFAULT_FOLDS],
+        "folds": [fold.__dict__ for fold in folds],
     }
     (out_dir / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -318,7 +390,7 @@ def run_validation(args: argparse.Namespace) -> Path:
     train_universes = parse_csv(args.train_universes)
     combos = [
         (fold, universe)
-        for fold in DEFAULT_FOLDS
+        for fold in folds
         for universe in train_universes
         if (fold.name, universe) not in done_keys
     ]
@@ -368,7 +440,14 @@ def run_validation(args: argparse.Namespace) -> Path:
                     )
 
     results = pd.concat(all_frames, ignore_index=True)
-    summary = summarize(results)
+    robust_weights = None
+    if getattr(args, "robust_weights", None):
+        import json as _json
+        try:
+            robust_weights = _json.loads(args.robust_weights)
+        except Exception as exc:
+            print(f"WARNING: could not parse --robust-weights JSON: {exc}", flush=True)
+    summary = summarize(results, robust_weights=robust_weights)
     all_path = out_dir / "walk_forward_all_results.csv"
     summary_path = out_dir / "walk_forward_summary.csv"
     report_path = out_dir / "walk_forward_report.md"
@@ -402,6 +481,22 @@ def main(argv: Iterable[str] | None = None) -> None:
         default=-1,
         help="Parallel workers for the backtest grid search inside each fold "
              "(-1 = all CPU cores, 1 = serial). Passed through to run_backtest.py.",
+    )
+    parser.add_argument(
+        "--robust-weights",
+        type=str,
+        default=None,
+        help="JSON string overriding robust_score coefficients, e.g. "
+             "'{\"mean_sharpe\": 1.0, \"sharpe_std\": -0.3, \"min_sharpe\": 0.3, "
+             "\"positive_sharpe_folds\": 0.1}'",
+    )
+    parser.add_argument(
+        "--folds-config",
+        type=str,
+        default=None,
+        help="Path to a YAML file defining custom fold definitions. "
+             "Defaults to the built-in 7-fold schedule (2020-2026). "
+             "See config/walk_forward_folds.yaml.example for the format.",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 

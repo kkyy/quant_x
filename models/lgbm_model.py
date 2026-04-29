@@ -52,6 +52,9 @@ class LGBMAlphaModel(BaseAlphaModel):
     - Merges extra_factors (sector / custom) into the feature matrix
     - Marks 'sector_id' as a categorical feature in LightGBM
     - Exposes feature importance
+    - Optional bootstrap bagging: set ensemble_seeds to a list of seeds and
+      bagging_fraction to (0, 1] to train each member on a bootstrapped
+      subsample of the training data.
 
     Parameters
     ----------
@@ -59,6 +62,10 @@ class LGBMAlphaModel(BaseAlphaModel):
     extra_factors       : pre-computed factor DataFrame (replaces old
                           sector_factors + custom_factors pair)
     categorical_features: column names to treat as categorical in LightGBM
+    bagging_fraction    : float in (0, 1] — fraction of training rows sampled
+                          (with replacement) for each ensemble member.
+                          ``None`` (default) disables bootstrap; all members
+                          train on the full training set.
     """
 
     def __init__(
@@ -68,6 +75,7 @@ class LGBMAlphaModel(BaseAlphaModel):
         categorical_features: Optional[List[str]] = None,
         factor_pipeline=None,
         ensemble_seeds: Optional[List[int]] = None,
+        bagging_fraction: Optional[float] = None,
         # legacy params kept for backward compatibility
         sector_factors: Optional[pd.DataFrame] = None,
         custom_factors: Optional[pd.DataFrame] = None,
@@ -82,6 +90,7 @@ class LGBMAlphaModel(BaseAlphaModel):
         self.feature_names_: Optional[List[str]] = None
         self.factor_pipeline = factor_pipeline
         self.ensemble_seeds = ensemble_seeds or [seed]
+        self.bagging_fraction = bagging_fraction  # None = no bootstrap
 
         # Build unified extra_factors from all sources
         parts = [df for df in (extra_factors, sector_factors, custom_factors)
@@ -142,9 +151,27 @@ class LGBMAlphaModel(BaseAlphaModel):
                 len(self.ensemble_seeds),
                 ensemble_seed,
             )
+
+            # Optional bootstrap bagging
+            if self.bagging_fraction is not None and 0 < self.bagging_fraction < 1:
+                rng = np.random.RandomState(ensemble_seed)
+                n_samples = max(1, int(len(X_tr) * self.bagging_fraction))
+                idx = rng.choice(len(X_tr), size=n_samples, replace=True)
+                X_bag = X_tr.iloc[idx]
+                y_bag = y_tr.iloc[idx]
+                logger.debug(
+                    "Bootstrap bag: %d/%d rows (seed=%s)", n_samples, len(X_tr), ensemble_seed
+                )
+                bag_ds = lgb.Dataset(X_bag, label=y_bag,
+                                     categorical_feature=cat_feats or "auto",
+                                     free_raw_data=False)
+                train_dataset = bag_ds
+            else:
+                train_dataset = tr_ds
+
             booster = lgb.train(
                 seed_params,
-                tr_ds,
+                train_dataset,
                 num_boost_round=n_est,
                 valid_sets=[va_ds],
                 callbacks=[
@@ -193,6 +220,8 @@ class LGBMAlphaModel(BaseAlphaModel):
             self.factor_pipeline = None
         if not hasattr(self, "extra_factors"):
             self.extra_factors = None
+        if not hasattr(self, "bagging_fraction"):
+            self.bagging_fraction = None
 
     def _prediction_models(self) -> List[Any]:
         self._ensure_runtime_defaults()

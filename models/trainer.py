@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 import importlib as _il
 for _m in ("lgbm_model", "linear_model", "xgb_model", "nn_model"):
     _il.import_module(f".{_m}", package=__name__.rsplit(".", 1)[0])
-for _f in ("sector_factors", "technical_factors", "factor_mining"):
+for _f in ("sector_factors", "technical_factors", "factor_mining", "regime_features"):
     _il.import_module(f"..features.{_f}", package=__name__.rsplit(".", 1)[0])
 
 
@@ -221,6 +221,24 @@ class ModelTrainer:
             encoding="utf-8",
         )
         logger.info(f"Metadata saved → {stem}_meta.json")
+
+        # Persist feature importance for trend analysis
+        try:
+            imp_df = model.feature_importance(top_n=50)
+            if not imp_df.empty:
+                imp_path = self.model_dir / f"{stem}_feature_importance.json"
+                imp_records = imp_df.to_dict(orient="records")
+                imp_path.write_text(
+                    _json.dumps(
+                        {"model": model_name, "tag": tag, "ts": ts, "importance": imp_records},
+                        ensure_ascii=False, indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                logger.info(f"Feature importance saved → {imp_path.name}")
+        except Exception as exc:
+            logger.debug(f"Feature importance export skipped: {exc}")
+
         return model, dataset, None
 
     def _model_kwargs(
@@ -238,6 +256,9 @@ class ModelTrainer:
             ensemble_cfg = model_cfg.get("ensemble", {})
             if ensemble_cfg.get("enabled", False):
                 base["ensemble_seeds"] = ensemble_cfg.get("seeds", [42, 123, 2024])
+            bagging_fraction = ensemble_cfg.get("bagging_fraction", None)
+            if bagging_fraction is not None:
+                base["bagging_fraction"] = float(bagging_fraction)
             if factor_pipeline is not None:
                 base["factor_pipeline"] = factor_pipeline
 

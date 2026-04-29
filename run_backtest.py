@@ -90,6 +90,7 @@ def main(
     markets: list = None,
     explore_markets: bool = False,
     grid_workers: int = -1,
+    output_csv: str = None,
 ):
     config = load_config(config_path)
     today = datetime.now().strftime("%Y-%m-%d")
@@ -218,7 +219,8 @@ def main(
         best = GridSearchBacktest.best_params(results_df)
         print(f"\n✅ 最优参数: {best}")
 
-        csv_path = out_dir / f"grid_{today}.csv"
+        csv_path = Path(output_csv) if output_csv else out_dir / f"grid_{today}.csv"
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
         results_df.to_csv(csv_path, index=False)
         logger.info(f"结果已保存 → {csv_path}")
 
@@ -342,6 +344,13 @@ if __name__ == "__main__":
         default=-1,
         help="网格搜索并行进程数，-1 表示使用全部 CPU 核心，1 表示串行（默认: -1）",
     )
+    parser.add_argument(
+        "--output-csv",
+        type=str,
+        default=None,
+        help="指定 grid search 结果输出 CSV 路径（默认: backtest_results/grid_{date}.csv）。"
+             "walk-forward 模式下用此参数隔离每折结果，避免并行竞争。",
+    )
     args = parser.parse_args()
 
     main(
@@ -359,4 +368,5 @@ if __name__ == "__main__":
         markets=parse_strings(args.markets) if args.markets else None,
         explore_markets=args.explore_markets,
         grid_workers=args.grid_workers,
+        output_csv=args.output_csv,
     )

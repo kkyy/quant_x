@@ -174,14 +174,6 @@ class TechnicalFactorEngine(BaseFactor):
     ) -> pd.DataFrame:
         """Average True Range / close (normalised volatility)."""
         prev_close = close.shift(1)
-        tr = pd.concat(
-            [high - low,
-             (high - prev_close).abs(),
-             (low  - prev_close).abs()],
-            axis=1,
-        ).groupby(level=0, axis=1).max() if False else None
-
-        # Manual TR per instrument
         tr_dict = {}
         for inst in close.columns:
             h = high[inst] if inst in high.columns else pd.Series(np.nan, index=close.index)
