@@ -60,6 +60,7 @@ class UpdateOptions:
     repair_dolt_clone: bool
     output_dir: Optional[Path]
     python: str
+    supplement_source: str  # "none" | "akshare" | "eastmoney"
 
 
 def resolve_path(path: str, base: Path = PROJECT_ROOT) -> Path:
@@ -138,6 +139,7 @@ def build_options(config: Dict[str, Any], args: argparse.Namespace) -> UpdateOpt
         repair_dolt_clone=args.repair_dolt_clone,
         output_dir=resolve_path(output_dir) if output_dir else None,
         python=args.python or sys.executable,
+        supplement_source=args.supplement_source or update_config.get("supplement_source", "none"),
     )
 
 
@@ -510,11 +512,49 @@ def stop_dolt_server(process: Optional[subprocess.Popen[str]]) -> None:
         process.wait(timeout=10)
 
 
+def supplement_source_data(paths: UpdatePaths, options: UpdateOptions) -> None:
+    """Fill any gap between the Dolt dump and today using a supplementary source.
+
+    Runs after ``dump_stock_source`` so newly-fetched rows are processed by the
+    same normalize → dump_bin pipeline as the Dolt data.
+    """
+    source_name = options.supplement_source
+    if source_name == "none":
+        return
+
+    from data.sources.gap_filler import GapFiller, detect_source_cutoff
+
+    if source_name == "akshare":
+        from data.sources.akshare_source import AkshareSource
+        data_source = AkshareSource()
+    elif source_name == "eastmoney":
+        from data.sources.eastmoney_source import EastMoneySource
+        data_source = EastMoneySource()
+    else:
+        raise ValueError(
+            f"Unknown supplement_source '{source_name}'. "
+            "Choose: akshare | eastmoney | none"
+        )
+
+    filler = GapFiller(
+        source_dir=paths.source_dir,
+        data_source=data_source,
+        max_workers=options.max_workers,
+    )
+    end_date = pd.Timestamp.today().strftime("%Y-%m-%d")
+    stats = filler.fill(end_date=end_date)
+    print(
+        f"[supplement:{source_name}] filled={stats['filled']} "
+        f"skipped={stats['skipped']} errors={stats['errors']}"
+    )
+
+
 def refresh_qlib_bin(paths: UpdatePaths, options: UpdateOptions) -> None:
     ensure_repositories(paths, options)
     dolt_process = start_dolt_server(paths, options)
     try:
         dump_stock_source(paths, options)
+        supplement_source_data(paths, options)
         normalize_source(paths, options)
         dump_bin(paths, options)
         dump_index_weight(paths, options)
@@ -587,6 +627,16 @@ def parse_args() -> argparse.Namespace:
         help="Move an incomplete first Dolt clone aside and start a new clone.",
     )
     parser.add_argument("--no-tarball", action="store_true", help="Do not create qlib_bin.tar.gz.")
+    parser.add_argument(
+        "--supplement-source",
+        choices=["none", "akshare", "eastmoney"],
+        default=None,
+        help=(
+            "Fill trading-day gaps after the Dolt dump using a supplementary "
+            "source.  'none' (default) skips supplementation.  'akshare' uses "
+            "the akshare library; 'eastmoney' uses the built-in crawler SDK."
+        ),
+    )
     return parser.parse_args()
 
 

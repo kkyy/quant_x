@@ -40,6 +40,18 @@ except ImportError as exc:  # pragma: no cover - depends on external qlib script
     ) from exc
 
 
+class NoopNormalize(Normalize):
+    """Normalize wrapper that skips the buggy format_data step.
+
+    qlib's Normalize.format_data() hardcodes column name 'date', but our
+    CSVs use 'tradedate'.  That causes the last row to be silently dropped
+    every run, making the calendar lag by one trading day.
+    """
+
+    def format_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        return df
+
+
 class CrowdSourceNormalize(BaseNormalize):
     """Yahoo CN normalizer variant that keeps amount and adjusts vwap."""
 
@@ -152,7 +164,7 @@ def normalize_crowd_source_data(
     symbol_field_name: str = "symbol",
 ) -> None:
     mp.set_start_method("spawn", force=True)
-    normalizer = Normalize(
+    normalizer = NoopNormalize(
         source_dir=source_dir,
         target_dir=normalize_dir,
         normalize_class=CrowdSourceNormalize,
