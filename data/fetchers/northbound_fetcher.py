@@ -10,7 +10,7 @@ Cache strategy:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import List, Optional
 
@@ -32,8 +32,11 @@ class NorthboundFetcher(BaseDataFetcher):
         self.refresh_cache(symbols)
         return self._load_cached_range(start_date, end_date)
 
-    def refresh_cache(self, symbols: List[str]) -> None:
-        """Refresh holdings and flow cache for today."""
+    def refresh_cache(self, _symbols: List[str]) -> None:
+        """Refresh holdings and flow cache for today.
+
+        _symbols is ignored — the holdings API returns all stocks at once.
+        """
         today = date.today().strftime("%Y-%m-%d")
         self._fetch_holdings(today)
         self._fetch_hist_flow()
@@ -48,13 +51,13 @@ class NorthboundFetcher(BaseDataFetcher):
         if self._is_cache_fresh(cache_file):
             return self._read_cache(cache_file)
 
-        df = self._fetch_holdings_with_fallback(date_str)
+        df = self._fetch_holdings_with_fallback()
         if df is not None and not df.empty:
             df.to_csv(cache_file)
             logger.info(f"NorthboundFetcher: cached holdings for {date_str} ({len(df)} stocks)")
         return df
 
-    def _fetch_holdings_with_fallback(self, date_str: str) -> Optional[pd.DataFrame]:
+    def _fetch_holdings_with_fallback(self) -> Optional[pd.DataFrame]:
         try:
             raw = self._call_akshare_holdings()
         except Exception as exc:
@@ -117,6 +120,56 @@ class NorthboundFetcher(BaseDataFetcher):
 
         result = result.reset_index().set_index(["instrument", "datetime"])
         return result
+
+    def _fetch_individual(self, qlib_symbol: str) -> Optional[pd.DataFrame]:
+        """Fetch per-stock northbound history (on-demand, not cached in refresh_cache)."""
+        self._ensure_cache_dir()
+        cache_file = self.cache_dir / f"{qlib_symbol}_individual.csv"
+
+        if self._is_cache_fresh(cache_file):
+            return self._read_cache(cache_file)
+
+        code = self.to_bare_code(qlib_symbol)
+        try:
+            import akshare as ak
+            raw = ak.stock_hsgt_individual_em(symbol=code)
+        except Exception as exc:
+            logger.warning(f"NorthboundFetcher: individual fetch failed for {qlib_symbol}: {exc}")
+            return None
+
+        if raw is None or raw.empty:
+            return None
+
+        df = raw.copy()
+        date_col = next((c for c in df.columns if "日期" in str(c)), None)
+        if date_col is None:
+            return None
+        df[date_col] = pd.to_datetime(df[date_col])
+        df = df.set_index(date_col)
+        df.index.name = "datetime"
+
+        # Rename known columns
+        rename_map = {}
+        hold_pct_col = next((c for c in df.columns if "持股数量占A股百分比" in str(c)), None)
+        if hold_pct_col:
+            rename_map[hold_pct_col] = "nb_hold_pct"
+        mv_col = next((c for c in df.columns if "持股市值" in str(c)), None)
+        if mv_col:
+            rename_map[mv_col] = "nb_hold_mv"
+        chg_col = next((c for c in df.columns if "今日增持股数" in str(c)), None)
+        if chg_col:
+            rename_map[chg_col] = "nb_hold_chg"
+
+        df = df.rename(columns=rename_map)
+        keep = [c for c in ["nb_hold_pct", "nb_hold_mv", "nb_hold_chg"] if c in df.columns]
+        if not keep:
+            return None
+        df = df[keep].apply(pd.to_numeric, errors="coerce")
+        df.index = pd.MultiIndex.from_product(
+            [[qlib_symbol], df.index], names=["instrument", "datetime"]
+        )
+        df.to_csv(cache_file)
+        return df
 
     # ── Historical flow ────────────────────────────────────────────────────
 
@@ -182,8 +235,10 @@ class NorthboundFetcher(BaseDataFetcher):
     def _code_to_instrument(code: str) -> str:
         """Convert 6-digit code or prefixed code to qlib instrument."""
         bare = code.strip()
-        if bare.startswith(("SH", "SZ")):
+        if bare.startswith(("SH", "SZ", "BJ")):
             return bare
+        if bare.startswith(("4", "8")):
+            return f"BJ{bare}"
         exchange = "SH" if bare.startswith(("6", "9")) else "SZ"
         return f"{exchange}{bare}"
 

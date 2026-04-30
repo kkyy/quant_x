@@ -1,7 +1,6 @@
 import pytest
 import pandas as pd
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from quant_ex.data.fetchers.northbound_fetcher import NorthboundFetcher
 
 
@@ -85,6 +84,25 @@ def test_refresh_cache_calls_fetch_holdings(fetcher, tmp_path):
         fetcher.refresh_cache(symbols)
     # Should fetch holdings for today and hist flow
     assert mock_holdings.called or mock_flow.called
+
+
+def test_fetch_individual_returns_multiindex(fetcher, tmp_path):
+    fake_df = pd.DataFrame({
+        "持股日期": ["2026-04-28", "2026-04-29"],
+        "当日收盘价": [1800.0, 1820.0],
+        "持股数量": [10000.0, 10500.0],
+        "持股市值": [18000000.0, 19110000.0],
+        "持股数量占A股百分比": [5.2, 5.4],
+        "今日增持股数": [100.0, 500.0],
+        "今日增持资金": [180000.0, 910000.0],
+        "今日持股市值变化": [1000000.0, 1110000.0],
+    })
+    with patch("akshare.stock_hsgt_individual_em", return_value=fake_df):
+        result = fetcher._fetch_individual("SH600519")
+    assert result is not None
+    assert result.index.names == ["instrument", "datetime"]
+    assert "nb_hold_pct" in result.columns
+    assert "nb_hold_mv" in result.columns
 
 
 def test_fallback_to_eastmoney(fetcher, tmp_path):

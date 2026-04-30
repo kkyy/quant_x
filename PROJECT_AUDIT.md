@@ -1,681 +1,416 @@
-# quant_ex 项目全面审计报告
+# quant_ex 项目审计报告（复核更新版）
 
-> 生成时间：2026-04-29  
-> 审计范围：全部 Python 源码、配置文件、测试文件  
-> 审计目标：缺陷/隐患、优化点、缺失能力、盈利目标差距
+> 复核时间：2026-04-30  
+> 复核基线：当前工作区 HEAD + 2026-04-29 旧版审计报告  
+> 复核范围：`models/`、`features/`、`data/`、`backtest/`、`signals/`、`run_*.py`、`config/`、`test/`
 
 ---
 
 ## 目录
 
-1. [代码缺陷与潜在隐患](#1-代码缺陷与潜在隐患)
-2. [现有功能的优化机会](#2-现有功能的优化机会)
-3. [缺失的量化能力规划](#3-缺失的量化能力规划)
-4. [与量化盈利目标的差距分析](#4-与量化盈利目标的差距分析)
+1. [复核摘要](#1-复核摘要)
+2. [已关闭或过时的旧结论](#2-已关闭或过时的旧结论)
+3. [当前仍然成立的缺陷与风险](#3-当前仍然成立的缺陷与风险)
+4. [优化机会（按收益/成本排序）](#4-优化机会按收益成本排序)
+5. [能力盘点：已具备 / 部分具备 / 缺失](#5-能力盘点已具备--部分具备--缺失)
+6. [与量化盈利目标的主要差距](#6-与量化盈利目标的主要差距)
+7. [建议的下一轮工作顺序](#7-建议的下一轮工作顺序)
 
 ---
 
-## 1. 代码缺陷与潜在隐患
+## 1. 复核摘要
 
-### BUG-01 ⚠️ `_code_to_qlib` 逻辑不一致（双份代码，映射规则有差异）
+这次复核的核心结论与 2026-04-29 的旧版报告相比有明显变化：
 
-**位置：** `data/sector.py:22-27` vs `data/universe.py:51-62` vs `signals/generator.py:64-77`
+- 旧报告中一批高优先级问题已经修复，不能再继续视为未完成项。
+- 旧报告中若干“缺失能力”实际上已经落地，只是旧报告没有反映最新代码状态。
+- 当前最值得优先处理的问题，已经从“代码重复、并行竞态、基础分析能力缺失”，转移为“回测基准链路未贯通、执行假设偏理想化、历史成分前视偏差、实盘风险约束不足”。
 
-**问题描述：**  
-三处独立的股票代码转换函数，映射规则不完全一致：
+本次复核后，将问题重新分成三类：
 
-| 文件 | B股 (9xxxxx) | BJ股 (4/8xxxxx) |
-|------|------------|----------------|
-| `sector.py:_code_to_qlib` | 以 "9" 开头 → 映射到 `SZ`（❌ 错误，应为 SH） | 正确 |
-| `universe.py:_to_qlib_code` | `prefix in (6,9)` → `SH`（✅ 正确） | 正确 |
-| `signals/generator.py:_to_qlib_code` | 同 universe.py（✅ 正确） | 正确 |
-
-`sector.py` 的 `_code_to_qlib` 对 B 股（SH9xxxxx，如 SH900001）处理有误，会将其错误归入 SZ 系列，导致板块数据关联错误。
-
-**影响范围：** 板块因子、sector_map 计算、行业中性化处理  
-**修复建议：** 统一成一个 `data/utils.py` 中的 `code_to_qlib_instrument(code: str) -> str` 函数，三处引用。
+- 已关闭：确认已修复或原判断为误报。
+- 活跃问题：当前代码中仍存在，且会影响研究结论或实盘可信度。
+- 中长期缺口：不是 bug，但会限制策略质量或落地能力。
 
 ---
 
-### BUG-02 ⚠️ `technical_factors.py` ATR 计算中存在死代码
+## 2. 已关闭或过时的旧结论
 
-**位置：** `features/technical_factors.py:177-182`
+下列结论在当前代码中已经不再成立，或需要改写为“部分完成”。
 
-**问题代码：**
-```python
-tr = pd.concat(
-    [...],
-    axis=1,
-).groupby(level=0, axis=1).max() if False else None
-```
+| 旧编号 | 当前状态 | 复核结论 |
+|---|---|---|
+| BUG-01 | 已修复 | 股票代码转换已统一到 `data/utils.py:code_to_qlib_instrument()`，`data/universe.py`、`signals/generator.py`、`data/sector.py` 已改为复用统一实现。|
+| BUG-02 | 已修复 | `features/technical_factors.py` 中 ATR 的死代码已删除，当前实现只保留逐股真实计算路径。|
+| BUG-03 | 已修复 | Walk-forward 已通过 `run_backtest.py --output-csv` 写入折叠隔离路径，`run_walk_forward_validation.py` 不再依赖“最新 CSV”猜测。|
+| BUG-05 | 已修复 | `features/sector_factors.py:_map_sector_stat()` 已改为向量化 `groupby + reindex`，原双循环瓶颈已消除。|
+| BUG-06 | 已修复 | `sector_reversal` 已改为短窗动量减长窗动量，不再等于 `-sector_momentum`。|
+| BUG-07 | 已修复 | `signals/generator.py` 现在会用最新 `$volume` 识别停牌股票，并在构造目标持仓时跳过。|
+| BUG-10 | 误报 | `_merge_extra()` 存在于 `models/base.py`，`lgbm_model.py` 的调用链是成立的。|
+| OPT-03 | 已完成 | CSV 输出路径隔离已经实现，旧优化项应从待办中移除。|
+| OPT-05 | 已完成 | `models/trainer.py` 已将 Top-N 特征重要性写入 `models/*_feature_importance.json`。|
+| OPT-06 | 已完成 | `LGBMAlphaModel` 已支持 `bagging_fraction` 的 bootstrap bagging。|
+| OPT-08 | 已完成 | `run_walk_forward_validation.py` 已支持 `--folds-config`，并提供 `config/walk_forward_folds.yaml.example`。|
+| CAP-03 | 已完成 | `backtest/signal_diagnostics.py` 已有 `compute_ic_decay()`。|
+| CAP-05 | 部分完成 | `backtest/metrics.py` 已有 `avg_turnover`，`run_backtest.py` 已有 `--slippage-sensitivity`；但结果仍未系统纳入候选策略决策流程。|
+| CAP-06 | 已完成 | `features/regime_features.py` 与 `strategy/regime_switch.py` 已提供市场状态感知与参数切换能力。|
+| CAP-08 | 部分完成 | `backtest/attribution.py` 已提供 Brinson 归因，但仍偏板块级，未覆盖个股/因子级归因闭环。|
+| CAP-09 | 部分完成 | `compute_rolling_ic()` 已存在，但自动告警、定时持久化、阈值治理尚未接通。|
+| GAP-04 | 部分缓解 | Walk-forward 汇总已包含 `sharpe_ttest_pvalue` / `return_ttest_pvalue`，但折叠数量偏少的问题仍然存在。|
+| GAP-08 | 部分缓解 | `signals/postprocess.py` 已支持 `size_neutralize`，但并未默认启用，也未形成标准归因口径。|
 
-`if False else None` 使整段代码永远不会执行，`tr` 始终为 `None`。之后正文的逐股循环才是真正被执行的代码。这段死代码还使用了 pandas 已废弃的 `axis=1` groupby 参数（pandas 2.0+ 会报 `FutureWarning` 甚至 `TypeError`）。
-
-**影响范围：** 无功能影响（dead code），但引发混淆，维护风险高  
-**修复建议：** 直接删除 `tr = ...` 的死代码块。
-
----
-
-### BUG-03 ⚠️ Walk-forward 并行模式下 CSV 竞争读取
-
-**位置：** `run_walk_forward_validation.py:277-288`，函数 `latest_grid_csv()`
-
-**问题描述：**  
-`latest_grid_csv()` 读取全局 `backtest_results/` 目录下时间最新的 grid CSV 文件。当 `--workers > 1` 时，多个并行 worker 同时写入该目录，一个 worker 可能读取到另一个 worker 刚写完的 CSV，导致结果混乱。
-
-```python
-def latest_grid_csv() -> Path:
-    candidates = list((REPO_ROOT / "backtest_results").glob("grid_*.csv"))
-    return max(candidates, key=lambda path: path.stat().st_mtime)  # 竞争条件！
-```
-
-**影响范围：** 并行 walk-forward 时折叠结果可能错配  
-**修复建议：** 在 `run_backtest.py` 中增加 `--output-csv <path>` 参数，让每次 grid search 将结果写到指定路径；在 `_run_one_fold_universe` 中传入隔离路径，避免读全局最新文件。
+结论：旧报告里至少有一半以上条目需要降级或移除，继续直接使用会高估项目当前缺口。
 
 ---
 
-### BUG-04 🔴 Backtest 指标不含基准超额收益（误导性 Sharpe）
+## 3. 当前仍然成立的缺陷与风险
 
-**位置：** `backtest/metrics.py:31-33`
+以下问题在本次复核中仍然成立，且优先级高于其他待办。
 
-**问题描述：**  
-当前 Sharpe 计算为 `ann_ret / ann_vol`，风险无风险利率设为 0，没有扣除任何基准收益。这意味着：
-- 即使策略跑输 CSI300，只要绝对回报为正，Sharpe 就可以很高
-- 不同市场环境（牛市/熊市）下的 Sharpe 没有可比性
-- 策略文件 `strategy_candidates.yaml` 中 Sharpe=1.758 是绝对 Sharpe，非超额 Sharpe
+### BUG-A01 🔴 基准超额收益链路只做了一半，回测主链仍未真正接入 benchmark
 
-此外，`backtest_daily` 调用时传入 `benchmark=None`，qlib 不会计算超额收益序列。
+**位置：** `backtest/metrics.py`、`backtest/engine.py`
 
-**影响范围：** 所有策略评估指标，误导参数选择和目标设定  
-**修复建议：**  
-1. `compute_metrics` 增加 `benchmark_rets` 可选参数，计算信息比率（IR）= `mean(daily_alpha) / std(daily_alpha)`  
-2. `BacktestEngine.run()` 传入正确 `benchmark`（SH000300）  
-3. 在报表中同时展示绝对 Sharpe 和超额 Sharpe
+**现状：**
 
----
+- `backtest/metrics.py` 已支持 `benchmark_rets`，可计算 `excess_annual_return`、`information_ratio`、`tracking_error`、`beta`、`alpha`。
+- 但 `backtest/engine.py` 仍调用 `backtest_daily(..., benchmark=None, ...)`。
+- 当前主流程没有看到稳定的 benchmark return 序列被传入 `compute_metrics()`，也就意味着“支持超额收益指标”和“实际在回测中使用超额收益指标”仍是两回事。
 
-### BUG-05 🔴 SectorFactorEngine 内存复杂度过高（逐板块逐股票双循环）
+**影响：**
 
-**位置：** `features/sector_factors.py:216-238`，函数 `_map_sector_stat`
-
-**问题描述：**  
-当前实现：先按板块计算聚合统计，再逐股票赋值，时间复杂度为 O(板块数 × 股票数)。对于 CSI1000（~250 行业 × 1000 只股票 × 1500 天 = ~3.75 亿次操作），内存和耗时极高。
-
-```python
-for sec in sectors:  # ~250 次
-    members = [c for c in sector_s[sector_s == sec].index if c in metric.columns]
-    ...
-for inst in metric.columns:  # ~1000 次
-    sec = sector_s.get(inst, "Unknown")
-    result[inst] = sector_agg[sec]
-```
-
-更高效的实现：
-```python
-sector_mean = metric.T.groupby(sector_s).mean().T  # (dates × sectors)
-result = sector_mean[sector_s]  # (dates × instruments) via broadcast
-result.columns = metric.columns
-```
-
-**影响范围：** 训练速度（使用 sector 因子时慢 5-10x）  
-**修复建议：** 用 groupby + reindex 替换双循环。
-
----
-
-### BUG-06 ⚠️ `sector_reversal` 因子实际等于 `-sector_momentum`（无新信息）
-
-**位置：** `features/sector_factors.py:204-207`
-
-**问题代码：**
-```python
-def _sector_reversal(self, rets, sector_s, window):
-    return -self._sector_momentum(rets, sector_s, window)
-```
-
-这只是 momentum 的负数，不是真正的反转因子。真正的反转信号应区分**短期过度反应**（短窗口均值回归）和**长期动量**（长窗口趋势延续），通常形如 `short_ret - long_ret` 或 `1w_ret - 4w_ret`。
-
-**影响范围：** 因子信息含量重复，浪费模型容量  
-**修复建议：** 将反转因子改为 `_sector_momentum(w_short) - _sector_momentum(w_long)` 形式。
-
----
-
-### BUG-07 ⚠️ 停牌股票在信号生成时没有被过滤（价格缓存问题）
-
-**位置：** `signals/generator.py:251-276`，函数 `_target_positions`
-
-**问题描述：**  
-`_target_positions` 以 `prices.get(inst, 0)` 跳过价格为 0 的股票，但停牌股票可能有来自上个交易日的缓存价格（非零），会被误纳入持仓目标。`UniverseFilter.exclude_suspended` 只过滤了 pred，但 `_target_positions` 直接使用 `top_stocks` 中可能残留的停牌股票。
-
-**影响范围：** 日常信号生成，可能生成无法成交的买入指令  
-**修复建议：** 在 `_target_positions` 中额外检查成交量（price_data 中 $volume=0 的过滤），或确保 universe_filter 在 generate() 入口处完整过滤。
-
----
-
-### BUG-08 ⚠️ `factor_mining.py` 的 `_compute` 调用全局 qlib `D.features`
-
-**位置：** `features/factor_mining.py:203-217`
-
-**问题描述：**  
-`FactorMiner._compute` 用 `D.features()` 获取因子值，但因子评估用到的时间范围来自 `price_data` 的索引，而 `D.features` 会调用 qlib 全局初始化的数据集。如果不同训练折叠使用了不同的 qlib 配置，或者 qlib 尚未初始化，会静默失败（try/except 吃掉了异常）。
-
-**影响范围：** 因子挖掘结果不可复现  
-**修复建议：** 明确传入 `instruments` 和日期范围，并增加 qlib 初始化状态检查；或将因子计算统一到 `FactorPipeline.compute()` 接口。
-
----
-
-### BUG-09 ⚠️ `min_price` 过滤中 `price_data` 对齐逻辑复杂且有 NaN 潜在失效
-
-**位置：** `data/universe.py:82-98`
-
-**问题描述：**  
-`min_price` 过滤对多时间步的预测序列（如整个 test period）使用了 "最后已知价格" 的 fallback，但 `fillna` 之前的 `aligned_prices.isna().any()` 会被整个 Series 的任何一个 NaN 触发，即使只有 1 只股票缺失价格，也会执行 per-instrument latest price 查找，引入额外开销且逻辑复杂。
-
-**影响范围：** 回测时价格过滤可能与信号生成期间行为不一致  
-**修复建议：** 简化为：对每个预测日期，只取该日期的最新可用价格；避免跨时间步的价格对齐。
-
----
-
-### BUG-10 ⚠️ `LGBMAlphaModel._merge_extra` 方法未在文件内定义
-
-**位置：** `models/lgbm_model.py`（`fit` L111，`predict` L170 都调用了 `self._merge_extra`）
-
-**问题描述：**  
-`lgbm_model.py` 中找不到 `_merge_extra` 的定义，它应该在 `BaseAlphaModel` 或某个 mixin 中。如果父类中不存在此方法（如由于重构被意外删除），会在运行时抛出 `AttributeError`，且当前测试没有覆盖到完整的 fit/predict 路径。
-
-**影响范围：** 训练、推理全路径  
-**修复建议：** 检查 `models/base.py`，确认 `_merge_extra` 方法存在且有正确实现；若不存在，在 `lgbm_model.py` 中补全。
-
----
-
-## 2. 现有功能的优化机会
-
-### OPT-01 消除重复的 `_load_stock_names` / `_code_to_qlib` 实现
-
-**现状：** `data/universe.py`、`signals/generator.py`、`run_scheduled_rebalance.py` 中各有一份几乎相同的解析 `sector_stocks.json` 的代码，且每次调用都重新读文件。
-
-**优化方案：**
-```python
-# data/utils.py
-from functools import lru_cache
-
-@lru_cache(maxsize=1)
-def load_stock_names() -> dict[str, str]:
-    """Cached {qlib_code: stock_name} from sector_stocks.json."""
-    ...
-
-@lru_cache(maxsize=1)
-def code_to_qlib_instrument(code: str) -> str:
-    ...
-```
-预期效果：消除重复代码 ~150 行，减少文件 I/O 次数，`exclude_st` 过滤速度提升 >3x。
-
----
-
-### OPT-02 akshare 行业数据获取串行改并发
-
-**位置：** `data/sector.py:138-158`，`_fetch_akshare()`
-
-**现状：** 逐一请求每个行业板块（~200 次串行 HTTP），总耗时约 2-5 分钟。
-
-**优化方案：**
-```python
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-def _fetch_akshare(self):
-    industry_list = ak.stock_board_industry_name_em()
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(ak.stock_board_industry_cons_em, row["板块名称"]): row["板块名称"]
-                   for _, row in industry_list.iterrows()}
-        for fut in as_completed(futures):
-            ...
-```
-预期效果：耗时从 3-5min 降至 30-60s。
-
----
-
-### OPT-03 Walk-forward 折叠 CSV 输出路径隔离
-
-**位置：** `run_walk_forward_validation.py:277`
-
-**现状：** 所有折叠都争用 `backtest_results/grid_*.csv` 中时间最新的文件。
-
-**优化方案：** 给 `run_backtest.py` 增加 `--output-dir` 参数，在 `_run_one_fold_universe` 中传入 `out_dir/fold_results/{tag}/`，直接指定输出路径而非靠时间戳猜测。
-
----
-
-### OPT-04 FactorPipeline 并行计算
-
-**位置：** `features/base.py`，`FactorPipeline.compute()`
-
-**现状：** 各因子顺序执行（technical → sector → mined），sector 因子尤其慢。
-
-**优化方案：**
-```python
-from concurrent.futures import ThreadPoolExecutor
-
-with ThreadPoolExecutor() as pool:
-    futures = [pool.submit(factor.compute, price_data) for factor in self.factors]
-    results = [f.result() for f in futures]
-```
-注意：需确认各因子无状态副作用（当前实现看起来符合）。预期效果：3 个因子并行时 ~2-3x 加速。
-
----
-
-### OPT-05 模型特征重要性持久化与时间趋势分析
-
-**现状：** `feature_importance()` 只在日志中打印，无结构化存储。
-
-**优化方案：**  
-在 `ModelTrainer` 训练完成后将特征重要性保存到 `models/{tag}_feature_importance.json`，并提供 `scripts/plot_feature_importance_trend.py` 对比不同时间折叠的重要性变化，检测因子退化迹象。
-
----
-
-### OPT-06 集成学习使用 Bootstrap 抽样而非固定种子复制
-
-**位置：** `models/lgbm_model.py:129-155`
-
-**现状：** 多个 `ensemble_seeds` 只改变随机种子，训练集完全相同，集成效果接近"多次独立运行求均值"而非真正的 Bagging。
-
-**优化方案：** 对每个 seed，用 bootstrap 抽样 80% 训练数据：
-```python
-if bagging_fraction < 1.0:
-    idx = rng.choice(len(X_tr), int(len(X_tr) * bagging_fraction), replace=False)
-    tr_ds = lgb.Dataset(X_tr.iloc[idx], label=y_tr.iloc[idx], ...)
-```
-预期效果：集成多样性提升，减少过拟合。
-
----
-
-### OPT-07 `run_daily.py` 数据重复加载
-
-**位置：** `run_daily.py`，`signals/generator.py:105-116`
-
-**现状：** `build_dataset()` 内部加载了一次 qlib feature 数据；`universe_filter.requires_price_data()` 为 True 时又通过 `load_price_data()` 再加载一次价格数据，且 `_fetch_prices` 在 generate() 结束时可能第三次加载。
-
-**优化方案：** 在 `SignalGenerator.generate()` 中统一预加载 price_data，作为所有下游调用的单一数据源。
-
----
-
-### OPT-08 Walk-forward 折叠定义外化为配置（YAML）
-
-**位置：** `run_walk_forward_validation.py:41-48`，`DEFAULT_FOLDS` 硬编码
-
-**现状：** 折叠边界完全硬编码在 Python 中，无法不修改源码地增加新折叠（如 2027）。
-
-**优化方案：** 将折叠定义移至 `config/walk_forward_folds.yaml`，支持 CLI 传入自定义折叠文件。
-
----
-
-### OPT-09 SectorFactorEngine `_map_sector_stat` 向量化重构
-
-**位置：** `features/sector_factors.py:216-238`（见 BUG-05）
-
-详见 BUG-05。性能影响约 5-10x，应优先实施。
-
----
-
-### OPT-10 Robust Score 公式参数可配置化
-
-**位置：** `run_walk_forward_validation.py:130-135`
-
-**现状：** `robust_score = mean_sharpe - 0.5*sharpe_std + 0.2*min_sharpe + 0.05*positive_sharpe_folds` 的系数完全硬编码，且系数本身（尤其是 `0.05 × positive_folds` 权重偏低）可能需要根据研究需求调整。
-
-**优化方案：** 将系数提取到 config 或 CLI 参数，并文档化其含义与选择依据。
-
----
-
-## 3. 缺失的量化能力规划
-
-### CAP-01 🔴 基准超额收益体系（Alpha / 信息比率）
-
-**重要性：** 高  
-**描述：**  
-目前所有回测指标均为绝对收益（相对于现金）。量化策略的核心价值在于 **超越基准**（CSI300/CSI500），而非绝对盈利。缺乏超额收益指标会造成：
-- 牛市中所有策略都看起来"表现好"
-- 无法识别策略的真实 Alpha 来源
-- 对模型退化不敏感
-
-**实施方案：**
-1. 在 `compute_metrics()` 中增加 `benchmark_rets` 参数，计算以下指标：
-   - `excess_annual_return` = 策略年化 - 基准年化
-   - `information_ratio` = `mean(daily_alpha) / std(daily_alpha) * sqrt(252)`
-   - `tracking_error` = `std(daily_alpha) * sqrt(252)`
-   - `beta` = `cov(strategy, benchmark) / var(benchmark)`
-2. 在 `BacktestEngine.run()` 中传入 `benchmark="SH000300"`
-3. 在所有报告中同时显示绝对和超额指标
-
----
-
-### CAP-02 🔴 基本面因子库（价值/质量/成长因子）
-
-**重要性：** 高  
-**描述：**  
-框架目前完全基于价格-成交量数据（Alpha158 + 自定义技术因子）。A 股市场大量 Alpha 来自基本面，包括：
-
-| 因子类别 | 代表因子 | 数据来源 |
-|---------|---------|---------|
-| 价值 | PE, PB, PS, PCF | 财报 |
-| 质量 | ROE, ROA, 毛利率, 负债率 | 财报 |
-| 成长 | 营收同比, 净利润同比, 预期修订 | 财报 + 分析师 |
-| 分红 | 股息率, 分红增长 | 公告 |
-| 分析师 | 一致预期上调/下调, 覆盖数变化 | Wind/聚源 |
-
-**实施方案：**
-1. 创建 `features/fundamental_factors.py`，注册为 `"fundamental"`
-2. 数据源优先用 akshare 的财报接口（`ak.stock_financial_report_sina`）
-3. 因子计算需处理财报滞后发布（T+45 天）避免前视偏差
-4. 加入 `config/model.yaml → features.factors` 列表
-
----
-
-### CAP-03 🔴 因子 IC 衰减分析（因子半衰期）
-
-**重要性：** 高  
-**描述：**  
-当前 `signal_diagnostics.py` 只计算单一时间点的 IC/ICIR，无法回答：
-- 模型在 1 天/3 天/5 天/10 天后预测能力如何衰减？
-- 当前使用的持仓周期（hold_thresh）是否与信号半衰期匹配？
-- 不同因子的最优持仓周期是否一致？
-
-**实施方案：**
-```python
-# backtest/ic_decay.py
-def compute_ic_decay(pred: pd.Series, price_data: pd.DataFrame, 
-                     horizons: list[int] = [1,2,3,5,10,15,20]) -> pd.DataFrame:
-    """计算不同预测期的 RankIC，返回 IC 衰减曲线"""
-    ...
-```
-集成到 `run_backtest.py --ic-decay` 选项。
-
----
-
-### CAP-04 🟡 多因子相关性与拥挤度监控
-
-**重要性：** 中  
-**描述：**  
-技术因子库（MA cross、RSI、OBV、VWAP 等）之间可能存在高度相关性，导致：
-- 有效因子数量少于表面上的数量
-- LightGBM 可能将相关因子分配权重但不提升预测力
-- 拥挤交易（同类型信号同时触发大量卖出）
-
-**实施方案：**
-1. 在 `features/library/screener.py` 的 `FactorScreener` 增加相关系数去重（已有框架）
-2. 将 IC 相关矩阵集成到 `run_factor_mining.py` 输出
-3. 每次训练后生成因子相关热图
-
----
-
-### CAP-05 🟡 持仓换手率跟踪与成本敏感性分析
-
-**重要性：** 中  
-**描述：**  
-框架回测使用固定的 `open_cost=0.0005, close_cost=0.0015`，但没有分析：
-- 实际年化换手率是多少？
-- 如果滑点增加 2bp，年化收益下降多少？
-- 最优参数在高换手率时是否仍然稳健？
-
-**实施方案：**
-1. `compute_metrics()` 增加 `turnover` 指标（持仓变动天数 / 总天数）
-2. 增加 `--slippage-sensitivity` 选项，在不同交易成本假设下跑同一组参数
-3. 在报告中标注每个参数组合的理论换手率
-
----
-
-### CAP-06 🟡 市场状态感知（熊/牛/震荡）
-
-**重要性：** 中  
-**描述：**  
-A 股有显著的市场状态周期性（参考走势：2015 暴涨/暴跌、2018 熊市、2020 疫情、2021-2023 震荡下跌）。单一参数集在不同市场状态下表现差异巨大：
-- 高换手（小 `hold_thresh`）在趋势市场中跑赢
-- 低换手（大 `hold_thresh`）在震荡市场中避免来回打脸
-
-**实施方案：**
-1. `features/regime_features.py`：基于 CSI300 的移动均线、波动率区间、ADX 等判断当前市场状态
-2. 在信号生成阶段根据市场状态动态切换策略参数（从 `config/strategy_candidates.yaml` 中选择）
-3. Walk-forward 结果按市场状态分层分析
-
----
-
-### CAP-07 🟡 持仓风险控制（止损/最大集中度/波动率目标）
-
-**重要性：** 中  
-**描述：**  
-`csi800_aggressive_return` 策略在某些年份有 50-60% 的单股集中度（已在 `strategy_candidates.yaml` 注明），这在实盘中完全不可接受。框架缺乏：
-
-- 单股最大权重上限（当前 `max_position_pct` 只在信号层生效，回测不受限）
-- 组合波动率目标（如目标年化波动 15%，动态调整仓位）
-- 动态止损（如最大回撤超过 15% 触发清仓/减仓）
-
-**实施方案：**
-1. 在 `BacktestEngine` 中增加 `position_limit` 参数传给 qlib 策略
-2. 实现 `VolatilityTargetSizer`：根据历史已实现波动率调整每期总仓位
-3. 在 `run_daily.py` 中增加最大回撤触发器
-
----
-
-### CAP-08 🟡 归因分析（因子/板块/个股贡献分解）
-
-**重要性：** 中  
-**描述：**  
-无法回答"策略收益来自哪里"是策略改进的最大障碍。需要：
-- 每日/每月的板块贡献
-- 各类因子（动量/价值/技术）的归因
-- 单股 P&L 分解
-
-**实施方案：**
-1. `backtest/attribution.py`：基于 Brinson-Hood-Beebower 模型的简化版归因
-2. 对每个持仓日计算：α = 个股超额 × 权重，按板块/因子聚合
-3. 输出月度归因 CSV 和可视化热图
-
----
-
-### CAP-09 🟡 模型退化监控与自动告警
-
-**重要性：** 中  
-**描述：**  
-框架使用静态训练模型（最后一次完整训练后不更新）。模型在以下情况下会静默退化：
-- 市场结构变化（政策因素、注册制改革等）
-- 训练数据与当前市场的分布漂移
-- 因子拥挤（大量资金跟随同类因子）
-
-**实施方案：**
-1. 在 `run_scheduled_rebalance.py` 中每周计算过去 20 天的滚动 RankIC，与历史均值比较
-2. 如果滚动 IC 显著下降（如低于历史均值 - 2σ），触发告警通知
-3. 将监控数据存储到 `signals/ic_monitor.csv`
-
----
-
-### CAP-10 🟡 在线增量学习 / 定期重训计划
-
-**重要性：** 中  
-**描述：**  
-目前模型是静态的，只有手动执行 `run_train.py` 才会更新。建议建立定期重训机制：
-- 每季度（或每月）用扩展窗口重训一次
-- 每次重训后自动运行最近 1 年的 hold-out 回测
-- 通过 IC 对比决定是否用新模型替换旧模型
-
-**实施方案：**
-1. 增加 `run_scheduled_retrain.py`，参数化扩展窗口
-2. 集成到 `launchd` 任务（每月第一个交易日）
-3. 增加新老模型 IC 对比报告
-
----
-
-### CAP-11 🟢 另类数据接入（舆情/分析师/资金流向）
-
-**重要性：** 低（但长期重要）  
-**描述：**  
-A 股 Alpha 中有相当一部分来自非价格数据：
-
-| 数据类型 | 来源 | 信号类型 |
-|---------|------|---------|
-| 北向资金流向 | akshare `ak.stock_hsgt_north_net_flow_in_em` | 趋势跟随 |
-| 股东人数变化 | akshare `ak.stock_hold_num_cninfo` | 散户挤兑 |
-| 融资融券 | akshare `ak.stock_margin_detail_szse` | 杠杆信号 |
-| 业绩预告/快报 | akshare `ak.stock_notice_report` | 事件驱动 |
-| 新闻情绪 | 东方财富新闻 API（crawler 可扩展） | 短期动量 |
-
-**实施方案：** 通过 `CsvFactor` 接口加载预计算的另类数据因子（低侵入性方案）。
-
----
-
-### CAP-12 🟢 多标签模型（收益/波动率/尾部风险联合预测）
-
-**重要性：** 低  
-**描述：**  
-当前模型只预测单一标签（5 日收益率）。可以增加：
-- **波动率预测**：训练第二个模型预测未来 realized vol，用于 Kelly 头寸调整
-- **尾部风险预测**：预测极端负收益（左尾）概率，用于组合风险控制
-- **收益/波动比**：用 Sharpe ratio 作为标签，而非原始收益
-
----
-
-### CAP-13 🟢 策略回测压力测试
-
-**重要性：** 低  
-**描述：**  
-框架缺乏对极端事件的模拟：
-- 2015 年股灾（连续跌停无法出场）
-- 2020 年 COVID（流动性骤降）
-- 涨跌停板规则下的执行延迟
-
-**实施方案：**  
-在 `BacktestEngine` 中增加 `circuit_breaker_dates` 参数，模拟跌停无法出场的情景。
-
----
-
-## 4. 与量化盈利目标的差距分析
-
-### GAP-01 🔴 单股集中度风险未被管控
-
-**问题：**  
-`strategy_candidates.yaml` 中明确记录 `csi800_aggressive_return`（Sharpe 最高的策略）在部分年份单股权重高达 50-60%。回测中这是"合法"的，但实盘中：
-- A 股单日成交额有限，大仓位进出会显著影响市价
-- 持有 50% 单股等同于高度集中押注，一旦该股出现黑天鹅，组合受损极大
-- 实盘净值将与"研究样本"偏差极大
-
-**建议：**  
-所有实盘使用的策略参数必须加入单股最大权重约束（建议 ≤ 20%），推荐使用 `csi1000_balanced`（topk=15）或 `csi800_stable_all_positive` 而非 `csi800_aggressive_return`。
-
----
-
-### GAP-02 🔴 执行假设过于理想化（收盘价成交）
-
-**问题：**  
-回测假设以 **收盘价** 成交（`deal_price: close`），这意味着：
-- 每天收盘后拿到信号，却用当天收盘价作为成交价（实际不可能）
-- A 股 T+1 规则：今天买的股票明天才能卖，但回测中可能当天买卖
-- 没有模拟集合竞价滑点（尤其是中小盘，开盘滑点可高达 0.5-1%）
-
-**定量影响估算：**  
-若每笔交易引入 0.2% 额外滑点，年化换手率 300%（topk=5 的情况），则滑点年化成本约 0.6%。对于 Sharpe=1.758 的策略，这相当于降低约 10-20% 的实际 Sharpe。
-
-**建议：**  
-1. 将 `deal_price` 改为次日开盘价（`open`），更符合实际  
-2. 增加成交量约束（每次买入不超过当日成交量的 N%）
-
----
-
-### GAP-03 🔴 训练/测试划分存在隐性数据泄露风险
-
-**问题：**  
-`sector_stocks.json` 是爬取的**当前**板块成分股数据，用于所有历史回测中的 ST 过滤和板块因子计算。这引入了**幸存者偏差**和**前视偏差**：
-- 已退市/被 ST 的历史股票可能不在 `sector_stocks.json` 中（幸存者偏差）
-- 当前的板块归属关系用于 2015-2020 年的历史数据（前视偏差，公司可能后来才被划入该板块）
+- 研究输出仍可能主要依赖绝对 Sharpe。
+- 牛市环境下参数优选仍可能高估策略质量。
+- `strategy_candidates.yaml` 中的历史结论很可能混合了绝对收益口径与超额收益口径。
 
 **建议：**
-1. 为回测构建历史快照式的板块成分股数据（按时间索引）
-2. 使用 qlib 内置的历史成分股列表（`InstrumentProvider` 已有快照能力）
+
+1. `BacktestEngine.run()` 传入正确 benchmark，而不是 `None`。
+2. 在回测报告和候选策略汇总中强制同时展示绝对 Sharpe 与 IR。
+3. 将“候选策略排名依据”切换为包含超额指标的组合口径。
 
 ---
 
-### GAP-04 🟡 走验折叠数量不足，统计检验力弱
+### BUG-A02 🔴 回测成交假设仍然偏理想化，默认 `deal_price="close"`
 
-**问题：**  
-7 个折叠（2020-2026），每个折叠 1 年。统计上：
-- 夏普比率的 t 检验：H0：真实 Sharpe=0，7 个样本的 t 值约为 `mean_sharpe / std_sharpe * sqrt(7)` ≈ 1.758 / 1.349 * 2.65 ≈ 3.45，p≈0.01
-- 但这 7 个年份并非独立（有自相关），实际显著性更低
-- 策略结论可能受少数特殊年份（2020/2021 A股牛市）主导
+**位置：** `backtest/engine.py`
 
-**建议：**  
-1. 使用月度/季度折叠（更多折叠数，更强统计检验力）  
-2. 在报告中显示 t 检验 p-value  
-3. 分析特定折叠（如 2022 年）表现不佳的原因，确认这是系统性原因还是偶然
+**现状：**
 
----
+当前 `exchange_kwargs` 仍固定：
 
-### GAP-05 🟡 Robust Score 公式存在自选择偏差
+```python
+"deal_price": "close"
+```
 
-**问题：**  
-`robust_score = mean_sharpe - 0.5*sharpe_std + 0.2*min_sharpe + 0.05*positive_folds` 中的系数（0.5, 0.2, 0.05）是在看到所有折叠结果后"设计"出来的，而非预先确定的。这本质上是又一轮隐式参数拟合，会导致对排名靠前策略的过度乐观估计。
+这对收盘后生成信号、次日执行的实际流程并不贴合。虽然近期已经补了 `min_cost`、净收益成本扣减、滑点敏感性分析，但成交时点假设本身没有改。
 
-**建议：**  
-1. 将 robust_score 的系数预先在协议中固定，不随结果调整  
-2. 或者使用无需系数的排名方法（如 Pareto 前沿：在 mean_sharpe 和 min_sharpe 双目标上取 Pareto 最优集）
+**影响：**
 
----
+- 回测与实盘调仓时间错位。
+- 中小盘策略的真实成交偏差仍可能被低估。
+- 高换手策略的研究结果仍偏乐观。
 
-### GAP-06 🟡 模型标签（5日收益）与持仓周期不匹配
+**建议：**
 
-**问题：**  
-模型预测的是 **5 日收益率**（Alpha158 默认标签 `Ref($close, -5)/$close - 1`），但 `hold_thresh` 最优值在 8-10 天。这意味着：
-- 模型被优化来预测 5 天后的表现
-- 但实际持仓 8-10 天
-- 持仓期超过信号预测期，信号在 6-10 天的预测能力已显著衰减
-
-**建议：**  
-1. IC 衰减分析（见 CAP-03）来确认最优持仓期  
-2. 训练多个标签模型（1d, 5d, 10d, 20d），选择与 hold_thresh 最匹配的  
-3. 或改用 `hold_thresh <= 5` 的参数组合
+1. 提供 `deal_price` 可配置项，至少支持 `open` / `close`。
+2. 对默认研究口径切换到“次日开盘成交”或明确区分“研究口径”和“实盘口径”。
+3. 将开盘滑点和量能约束纳入标准评估模板。
 
 ---
 
-### GAP-07 🟡 缺乏真实可交易性验证
+### BUG-A03 🔴 历史板块/ST 过滤仍存在前视偏差与幸存者偏差风险
 
-**问题：**  
-topk=5 的策略选股后，每只股票占账户 20%（若账户 50 万则每只约 10 万）。对于 CSI800 中的中小盘股票，日均成交额可能只有 2000-5000 万，10 万资金买入对市价影响约 0.2-0.5%，实际成本高于回测假设。
+**位置：** `data/utils.py`、`data/sector.py`、`data/universe.py`
 
-**建议：**  
-1. 在候选股票池中过滤日均成交额低于账户单笔金额 100 倍以下的股票  
-2. 或限制策略只在 CSI300 成分股中操作（流动性充裕）
+**现状：**
 
----
+- 股票名称和部分行业映射依赖当前 `crawler/data/sector_stocks.json`。
+- 这份文件是当前快照，不是按时间切片的历史快照。
 
-### GAP-08 🟢 Alpha 可能来源于市值暴露
+**影响：**
 
-**问题：**  
-A 股的量化策略普遍存在小市值因子暴露（small-cap premium），但：
-- CSI1000 包含大量小盘股，策略可能实际上是在收割小市值溢价而非真正的 Alpha
-- 近年来小市值因子（微盘股）在 A 股大幅波动（2024 年微盘股大跌 35%）
-- 如果策略的 Alpha 来源是市值暴露，则它在大盘跑赢时会显著跑输
+- 历史回测使用了“今天知道的 ST 名称/板块归属”。
+- 行业因子、行业中性化、ST 过滤都可能引入隐性前视信息。
+- 这类偏差不会让程序报错，但会系统性抬高回测可信度。
 
-**建议：**  
-1. 增加 `size_neutralize` 选项（类似 `industry_neutralize`），在因子后处理中控制市值暴露  
-2. 归因分析中分解出市值因子的贡献（见 CAP-08）
+**建议：**
+
+1. 为板块归属、ST 状态引入按日期索引的历史快照。
+2. 能用 qlib 历史成分股/历史证券状态时，优先切换到时间一致的数据源。
+3. 在所有研究报告中显式标注当前行业/名称数据是否为“当下快照”。
 
 ---
 
-## 优先级汇总
+### BUG-A04 ⚠️ `factor_mining.py` 仍依赖全局 qlib 状态，失败时以 debug 日志静默跳过
 
-| 序号 | 类别 | 标题 | 紧迫性 | 影响范围 |
-|-----|------|------|--------|---------|
-| BUG-01 | 缺陷 | `_code_to_qlib` 不一致 | 🔴 高 | 板块因子 |
-| BUG-04 | 缺陷 | 无基准超额收益指标 | 🔴 高 | 所有评估 |
-| BUG-05 | 缺陷 | SectorFactor 双循环性能 | 🔴 高 | 训练速度 |
-| BUG-03 | 缺陷 | WFV 并行 CSV 竞争 | ⚠️ 中 | 并行模式 |
-| OPT-01 | 优化 | 消除重复代码 | ⚠️ 中 | 可维护性 |
-| OPT-02 | 优化 | akshare 并发获取 | ⚠️ 中 | 运行速度 |
-| OPT-09 | 优化 | SectorFactor 向量化 | 🔴 高 | 训练速度 |
-| CAP-01 | 能力 | 超额收益/信息比率 | 🔴 高 | 策略评估 |
-| CAP-02 | 能力 | 基本面因子库 | 🔴 高 | Alpha 来源 |
-| CAP-03 | 能力 | IC 衰减分析 | 🔴 高 | 参数优化 |
-| CAP-07 | 能力 | 持仓风险控制 | 🔴 高 | 实盘安全 |
-| CAP-09 | 能力 | 模型退化监控 | 🟡 中 | 实盘稳健 |
-| GAP-01 | 差距 | 单股集中度风险 | 🔴 高 | 实盘安全 |
-| GAP-02 | 差距 | 执行假设理想化 | 🔴 高 | 真实收益 |
-| GAP-03 | 差距 | 前视偏差/幸存者偏差 | 🔴 高 | 策略可信度 |
-| GAP-06 | 差距 | 标签与持仓期不匹配 | 🟡 中 | 模型优化 |
+**位置：** `features/factor_mining.py:_compute()`
+
+**现状：**
+
+- 当前代码已经增加了 qlib 初始化检查，较旧版更安全。
+- 但 `_compute()` 仍直接调用全局 `D.features()`。
+- 若表达式失败、provider 状态不一致、日期范围不匹配，当前逻辑主要是 `debug` 记录后返回 `None`。
+
+**影响：**
+
+- 因子挖掘结果仍可能“不报错但缺失候选”。
+- 多环境、多折叠、多数据源场景下可复现性仍不足。
+
+**建议：**
+
+1. 将失败表达式计数和样本规模写入最终摘要，而不是只打 debug。
+2. 将挖掘输入对齐到统一的数据加载链路，减少对全局 qlib 状态的直接依赖。
+3. 对“因子有效但未计算”和“因子无效”做显式区分。
 
 ---
 
-*本报告由全代码审计自动生成，覆盖 `models/`、`features/`、`data/`、`backtest/`、`signals/`、`agent/`、`crawler/`、`run_*.py`、`config/` 全部模块。*
+### BUG-A05 ⚠️ `min_price` 过滤逻辑仍偏复杂，跨时间步 fallback 会增加理解和维护成本
+
+**位置：** `data/universe.py`
+
+**现状：**
+
+- 当前实现会先按 `pred.index` 对齐 `real_close`。
+- 若存在任何 `NaN`，则退回到“每只股票最新可用价格”做补洞。
+
+**风险：**
+
+- 不同时间点的信号可能混入不同口径的价格回填。
+- 逻辑正确性依赖对 MultiIndex 对齐细节的理解，维护门槛较高。
+- 性能上也会在有局部缺失时触发全量 fallback。
+
+**建议：**
+
+1. 明确过滤口径是“当日价格不足则剔除”还是“允许最近有效价格回填”。
+2. 若目标是回测一致性，优先使用逐交易日局部对齐，而不是全局 fallback。
+3. 为 `min_price` 增加专门单测，覆盖多日期、多股票、局部缺失场景。
+
+---
+
+### BUG-A06 ⚠️ 去重工作只完成了一部分，`run_scheduled_rebalance.py` 仍保留本地 `_load_stock_names()`
+
+**位置：** `run_scheduled_rebalance.py`
+
+**现状：**
+
+- `data/utils.py` 已提供统一的 `load_stock_names()`。
+- 但 `run_scheduled_rebalance.py` 仍保留本地 `_load_stock_names()`。
+
+**影响：**
+
+- 代码层面仍有一份额外维护点。
+- 后续如果 stock-name 来源或缓存规则调整，这里仍可能与公共实现脱节。
+
+**建议：**
+
+1. 将 `run_scheduled_rebalance.py` 也切换到 `data.utils.load_stock_names()`。
+2. 明确整个项目的“股票名称/代码转换”只保留一份权威入口。
+
+---
+
+### BUG-A07 ⚠️ 回测侧缺少真正的持仓约束执行，只在信号/提醒侧有集中度检查
+
+**位置：** `run_daily.py`、`signals/generator.py`、`backtest/engine.py`
+
+**现状：**
+
+- `signals/generator.py` 和 `run_daily.py` 已能检查 `max_position_pct`、`concentration_hard_limit`。
+- 但 `backtest/engine.py` 的策略执行层没有看到真正的仓位硬约束注入。
+
+**影响：**
+
+- 研究侧和实盘提醒侧的风险口径不一致。
+- 回测中允许出现“研究上能持有、实盘上不会允许”的极端集中仓位。
+
+**建议：**
+
+1. 将仓位上限下沉到回测执行逻辑，而不是只在信号层报警。
+2. 对 `strategy_candidates.yaml` 中已有候选重新按硬约束复跑。
+3. 将“约束前”和“约束后”的收益/风险损失分开记录。
+
+---
+
+## 4. 优化机会（按收益/成本排序）
+
+以下不是致命 bug，但投入产出比较高。
+
+### OPT-A01 高收益低成本：把超额收益口径接到所有主报表和候选策略排序
+
+原因：指标能力已经在 `backtest/metrics.py` 里实现了一半，剩下主要是链路贯通和报表口径统一，投入小、研究收益大。
+
+---
+
+### OPT-A02 高收益中成本：把回测成交价格、滑点、量能约束做成统一“实盘口径模板”
+
+原因：当前已经有 `--slippage-sensitivity`，说明基础设施存在。再往前一步，把 `deal_price`、量能上限、最小成交额过滤统一化，能显著提高研究与落地的一致性。
+
+---
+
+### OPT-A03 中收益低成本：继续完成数据工具去重
+
+重点对象：`run_scheduled_rebalance.py` 的 `_load_stock_names()`、其他可能残存的本地股票代码转换/名称加载实现。
+
+---
+
+### OPT-A04 中收益中成本：为 `FactorPipeline` 引入可控并行
+
+前提：确认各因子 `compute()` 无共享可变状态、无 qlib 全局副作用后，再并行化 `technical` / `sector` / `fundamental` / `mined`。
+
+预期收益：缩短训练前特征准备时间，尤其是带 sector/fundamental 因子的组合。
+
+---
+
+### OPT-A05 中收益中成本：将 `SectorDataProvider` 的 akshare 抓取改为并发
+
+旧报告这条仍然成立。当前 `fundamental_factor.py` 已经使用线程池并发抓取，说明项目并不排斥这种实现方式；行业数据层也适合做同类改造。
+
+---
+
+### OPT-A06 中收益中成本：补齐“失败可观测性”而不是继续依赖 debug 日志
+
+最典型的是 `factor_mining.py`。研究框架里“静默跳过”比报错更危险，因为它会直接污染结论而不暴露异常。
+
+---
+
+## 5. 能力盘点：已具备 / 部分具备 / 缺失
+
+### 5.1 已具备
+
+- 因子 IC 衰减分析：`compute_ic_decay()` 已存在。
+- 滚动 IC 监控基础函数：`compute_rolling_ic()` 已存在。
+- Brinson 板块归因：`backtest/attribution.py` 已存在。
+- 市值中性化：`signals/postprocess.py` 已支持 `size_neutralize`。
+- 市场状态切换：`strategy/regime_switch.py` 已接入 `run_daily.py` 与 `run_scheduled_rebalance.py`。
+- Walk-forward 自定义折叠：`--folds-config` 已支持。
+- 统计显著性：walk-forward 汇总已有 `sharpe_ttest_pvalue` / `return_ttest_pvalue`。
+- 换手率与滑点敏感性基础分析：`avg_turnover`、`--slippage-sensitivity` 已存在。
+- 基础基本面因子：`features/fundamental_factor.py` 已提供估值类因子抓取与缓存能力。
+
+### 5.2 部分具备
+
+#### CAP-B01 基准超额收益体系
+
+状态：部分具备。
+
+- 指标函数已支持。
+- 主回测链路未完全接通。
+- 研究排名口径仍未强制切换到超额收益优先。
+
+#### CAP-B02 基本面因子库
+
+状态：部分具备。
+
+- 已有 valuation 类因子（如 `pe_ttm`、`pb`、`ps_ttm`、`dyr`）。
+- 仍缺质量、成长、财报滞后处理更完整的一套基本面框架。
+
+#### CAP-B03 归因分析
+
+状态：部分具备。
+
+- 板块级 Brinson 已有。
+- 因子级、个股级、按月稳定输出的归因产品还没有形成闭环。
+
+#### CAP-B04 模型退化监控
+
+状态：部分具备。
+
+- 已有滚动 IC 计算函数。
+- 未见定时任务、阈值治理、告警通知和历史监控文件沉淀的完整链路。
+
+#### CAP-B05 风险控制
+
+状态：部分具备。
+
+- 信号侧已有集中度检查与提醒。
+- 回测/执行侧尚未形成统一硬约束。
+
+### 5.3 仍然缺失或明显不足
+
+#### CAP-C01 历史快照式行业/ST/证券状态数据
+
+这是当前最影响研究可信度的“数据层能力缺口”，优先级高于再增加几个新因子。
+
+#### CAP-C02 多标签或多持有期训练框架
+
+当前主标签仍偏向单一持有期。既然已经有 IC 衰减分析能力，下一步自然应该是让训练标签与持有周期协同，而不是长期停留在单标签评估。
+
+#### CAP-C03 实盘口径统一模板
+
+当前“研究回测”“日常信号”“定时调仓提醒”三条链路在价格口径、风险约束、执行口径上仍不完全统一。
+
+#### CAP-C04 压力测试与极端成交情景模拟
+
+当前还缺少跌停无法卖出、开盘跳空、流动性骤降等情景压力测试。
+
+#### CAP-C05 统一的研究可观测性与失败审计
+
+包括：表达式失败率、因子缺失率、数据源 fallback 次数、缓存命中率、行业映射覆盖率等。
+
+---
+
+## 6. 与量化盈利目标的主要差距
+
+从“代码完整性”角度看，项目已经明显强于旧报告描述的状态；但从“稳定盈利与可信落地”角度看，仍有四个核心差距。
+
+### GAP-A01 🔴 研究结果仍可能高估真实 Alpha
+
+根因不是单一 bug，而是三件事叠加：
+
+- benchmark 链路未完全接通；
+- `deal_price="close"` 偏理想化；
+- 历史行业/ST 数据仍可能使用当前快照。
+
+这三项一起存在时，即使代码本身没有报错，研究结果也可能系统性偏乐观。
+
+---
+
+### GAP-A02 🔴 回测风险约束与实盘约束仍未统一
+
+如果研究端允许极端集中，而提醒端只做报警，最终会出现“回测最优参数不可执行”的结构性偏差。
+
+---
+
+### GAP-A03 🟡 持有期与标签期的协同还没形成闭环
+
+现在项目已经具备 IC 衰减分析能力，因此这个问题从“看不到”变成了“已经能看见，但还没落实到训练与选参制度里”。
+
+---
+
+### GAP-A04 🟡 基本面与非价格 Alpha 仍不够厚
+
+虽然估值类基本面因子已经有基础实现，但目前 Alpha 主体仍偏价格/成交量。若要提升跨年份稳定性，仅靠技术面和行业相对强弱通常不够。
+
+---
+
+### GAP-A05 🟡 自动化研究闭环还不够强
+
+已有网格搜索、walk-forward、显著性检验、IC 衰减、滑点敏感性，但这些能力还没有完全汇总为一套标准化“研究准入门槛”。当前仍较依赖人工解释结果。
+
+---
+
+## 7. 建议的下一轮工作顺序
+
+如果按“先提高研究可信度，再扩展 Alpha 来源”的原则，建议顺序如下：
+
+1. 打通 benchmark 主链路，把超额收益指标变成默认口径。
+2. 把回测成交口径从固定收盘价扩展为可配置，并建立实盘口径模板。
+3. 为行业归属、ST 状态、证券状态补历史快照，先消除前视偏差。
+4. 将仓位硬约束下沉到回测执行层，重跑候选策略。
+5. 清理最后一批数据工具重复实现，降低维护分叉。
+6. 把 IC 衰减真正接入标签设计和持有期选择。
+7. 在已有估值因子基础上扩展质量/成长类基本面因子。
+
+---
+
+## 结论
+
+当前 `quant_ex` 已经不是“基础设施明显缺失”的状态，而是进入了“研究可信度和落地一致性决定上限”的阶段。
+
+与旧版报告相比，本次复核最重要的更新有三点：
+
+- 很多基础能力其实已经落地，旧报告低估了项目完成度。
+- 目前最高优先级不再是继续堆功能，而是把 benchmark、执行口径、历史快照和风险约束这四条关键链路做扎实。
+- 一旦这四项补齐，后续再做基本面扩展、标签体系升级、自动重训与退化告警，收益会更大，也更可信。
+
+*本报告为复核更新版，目的是反映当前代码状态，而不是保留历史问题清单。后续如再修复 benchmark、执行口径或历史快照问题，建议继续更新本文件，而不是在旧结论上叠加补丁。*
