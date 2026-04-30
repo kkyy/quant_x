@@ -52,9 +52,9 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import pandas as pd
 
