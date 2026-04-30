@@ -22,12 +22,15 @@ from quant_ex.data.loader import DataLoader
 from quant_ex.data.sector import SectorDataProvider
 from quant_ex.data.universe import UniverseFilter
 from quant_ex.notify.pusher import NotificationPusher
-from quant_ex.signals.postprocess import postprocess_signal
+from quant_ex.signals.postprocess import postprocess_requires_price_data, postprocess_signal
 from quant_ex.utils.config import load_config
 from quant_ex.utils.logger import setup_logger
 from quant_ex.utils.qlib_utils import load_recorder_model
 
 logger = setup_logger("run_scheduled_rebalance")
+
+SIGNAL_DATE_START_ALIASES = {"signal_date", "trade_date", "today"}
+PREVIOUS_DATE_START_ALIASES = {"previous_trade_date", "previous_trading_day", "yesterday"}
 
 
 @dataclass
@@ -92,7 +95,9 @@ def _daily_cfg(config: dict, args: argparse.Namespace) -> Dict[str, Any]:
     cfg["hold_thresh"] = (
         args.hold_thresh if args.hold_thresh is not None else int(cfg.get("hold_thresh", 5))
     )
-    cfg["start_date"] = args.start_date or cfg.get("start_date") or config.get("backtest", {}).get("start_time")
+    start_date = args.start_date or cfg.get("start_date") or config.get("backtest", {}).get("start_time")
+    cfg["start_date"] = start_date
+    cfg["_start_date_raw"] = start_date
     cfg["account"] = args.account if args.account is not None else float(cfg.get("account", 1_000_000))
     cfg["model_path"] = args.model_path if args.model_path is not None else cfg.get("model_path", "")
     cfg["notify_channel"] = args.notify_channel or cfg.get("notify_channel", "bark")
@@ -105,6 +110,33 @@ def _daily_cfg(config: dict, args: argparse.Namespace) -> Dict[str, Any]:
     if not cfg["start_date"]:
         raise ValueError("daily_rebalance.start_date is required.")
     return cfg
+
+
+def _resolve_start_date(
+    value: str,
+    trade_date: pd.Timestamp,
+    calendar: List[pd.Timestamp],
+) -> Tuple[str, bool]:
+    token = str(value).strip().lower()
+    if token in SIGNAL_DATE_START_ALIASES:
+        return trade_date.strftime("%Y-%m-%d"), True
+    if token in PREVIOUS_DATE_START_ALIASES:
+        return _previous_trading_day(trade_date, calendar)
+    return str(value), True
+
+
+def _resolve_cfg_start_date(
+    cfg: Dict[str, Any],
+    trade_date: pd.Timestamp,
+    calendar: List[pd.Timestamp],
+) -> Dict[str, Any]:
+    resolved = copy.deepcopy(cfg)
+    raw_start = resolved.get("_start_date_raw") or resolved.get("start_date")
+    start_date, exact = _resolve_start_date(str(raw_start), trade_date, calendar)
+    if not exact:
+        logger.warning("未在交易日历中找到动态回测起点，暂按工作日推断: %s", start_date)
+    resolved["start_date"] = start_date
+    return resolved
 
 
 def _apply_strategy_config(config: dict, cfg: Dict[str, Any]) -> dict:
@@ -204,29 +236,46 @@ def _predict_for_replay(
     }
     dataset = data_loader.build_dataset(segments=segments, instruments=instruments)
 
-    if getattr(model, "factor_pipeline", None) is not None:
-        logger.info("模型含有 factor_pipeline，为 %s 重新计算额外因子", instruments)
+    price_data = None
+    needs_full_price_data = (
+        getattr(model, "factor_pipeline", None) is not None
+        or postprocess_requires_price_data(config)
+    )
+    if needs_full_price_data:
         price_data = data_loader.load_price_data(
             instruments=instruments,
             start_time=tcfg.get("fit_start", "2015-01-01"),
             end_time=end,
         )
+
+    if getattr(model, "factor_pipeline", None) is not None:
+        logger.info("模型含有 factor_pipeline，为 %s 重新计算额外因子", instruments)
         model.refresh_extra_factors(price_data)
 
     pred = model.predict(dataset, segment="test")
     if universe_filter.requires_price_data():
-        price_data = data_loader.load_price_data(instruments=instruments, start_time=start, end_time=end)
+        if price_data is None:
+            price_data = data_loader.load_price_data(instruments=instruments, start_time=start, end_time=end)
         pred = universe_filter.filter(pred, price_data=price_data)
     else:
         pred = universe_filter.filter(pred)
 
+    post_cfg = config.get("signal", {}).get("postprocess", {})
     sector_provider = (
         SectorDataProvider(config)
-        if config.get("signal", {}).get("postprocess", {}).get("industry_neutralize", False)
+        if (
+            post_cfg.get("industry_neutralize", False)
+            or post_cfg.get("stock_vs_sector_filter", {}).get("enabled", False)
+        )
         else None
     )
     sector_map = sector_provider.get_map() if sector_provider is not None else None
-    return postprocess_signal(pred, config=config, sector_map=sector_map)
+    return postprocess_signal(
+        pred,
+        config=config,
+        sector_map=sector_map,
+        price_data=price_data,
+    )
 
 
 def _position_payload(position_obj: Any) -> Dict[str, Any]:
@@ -251,6 +300,56 @@ def _snapshot(position_obj: Any, lot_size: int = 100) -> Dict[str, Dict[str, flo
         price = float(info.get("price", 0) or 0)
         result[inst] = {"shares": float(shares), "price": price, "value": shares * price}
     return result
+
+
+def _source_csv_path(instrument: str) -> Path:
+    return PROJECT_ROOT / "qlib_data" / "qlib_source" / f"{instrument}.csv"
+
+
+def _load_actual_close(instrument: str, trade_date: str) -> Optional[float]:
+    path = _source_csv_path(instrument)
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_csv(path, usecols=["tradedate", "close"])
+    except Exception:
+        return None
+    dates = pd.to_datetime(df["tradedate"], errors="coerce")
+    target = pd.Timestamp(trade_date).normalize()
+    matched = df.loc[dates == target, "close"]
+    if matched.empty:
+        matched = df.loc[dates <= target, "close"].tail(1)
+    if matched.empty:
+        return None
+    price = pd.to_numeric(matched, errors="coerce").dropna()
+    if price.empty:
+        return None
+    value = float(price.iloc[-1])
+    return value if value > 0 else None
+
+
+def _convert_snapshot_to_actual_prices(
+    snapshot: Dict[str, Dict[str, float]],
+    trade_date: str,
+    lot_size: int = 100,
+) -> Dict[str, Dict[str, float]]:
+    converted: Dict[str, Dict[str, float]] = {}
+    for inst, info in snapshot.items():
+        target_value = float(info.get("value", 0) or 0)
+        actual_price = _load_actual_close(inst, trade_date)
+        if actual_price is None or target_value <= 0:
+            converted[inst] = dict(info)
+            continue
+        shares = int(target_value / actual_price / lot_size) * lot_size
+        if shares <= 0:
+            continue
+        converted[inst] = {
+            "shares": float(shares),
+            "price": actual_price,
+            "value": shares * actual_price,
+            "raw_target_value": target_value,
+        }
+    return converted
 
 
 def _sorted_position_items(positions: dict) -> List[Tuple[pd.Timestamp, Any]]:
@@ -316,8 +415,8 @@ def _run_real_rebalance(config: dict, cfg: Dict[str, Any], trade_date: str, next
         raise RuntimeError("回测没有返回 position 数据。")
     latest_dt, latest_obj = position_items[-1]
     prev_obj = position_items[-2][1] if len(position_items) > 1 else {}
-    target = _snapshot(latest_obj)
-    previous = _snapshot(prev_obj)
+    target = _convert_snapshot_to_actual_prices(_snapshot(latest_obj), trade_date)
+    previous = _convert_snapshot_to_actual_prices(_snapshot(prev_obj), trade_date)
     actions = _diff_positions(previous, target)
     metrics = _last_metrics(report)
     name_map = _load_stock_names()
@@ -560,13 +659,16 @@ def _rebuild_signal_for_reminder(
             )
 
     logger.info("提醒补救: 重新生成 %s -> %s 的调仓信号。", signal_date, today_str)
+    signal_ts = pd.Timestamp(signal_date).normalize()
+    run_cfg = _resolve_cfg_start_date(cfg, signal_ts, trading_calendar)
+    run_config = _apply_strategy_config(config, run_cfg)
     report = (
-        _mock_report(cfg, signal_date, today_str)
+        _mock_report(run_cfg, signal_date, today_str)
         if mock
-        else _run_real_rebalance(config, cfg, signal_date, today_str)
+        else _run_real_rebalance(run_config, run_cfg, signal_date, today_str)
     )
-    _save_signal_cache(cfg, signal_date, today_str, report, mock=mock)
-    return _load_latest_signal_cache(cfg)
+    _save_signal_cache(run_cfg, signal_date, today_str, report, mock=mock)
+    return _load_latest_signal_cache(run_cfg)
 
 
 def _to_qlib_code(code: str) -> str:
@@ -631,6 +733,7 @@ def _format_report(
         f"信号日: {trade_date}  执行日: {next_trade_date}",
         f"策略: {cfg['market']} / topk={cfg['topk']} / n_drop={cfg['n_drop']} / hold={cfg['hold_thresh']}",
         f"固定回测起点: {cfg['start_date']}  position日: {latest_position_date}",
+        "价格/股数口径: 未复权收盘价，按目标市值折算为100股整数手",
     ]
     if metrics:
         daily_ret = metrics.get("return")
@@ -713,11 +816,13 @@ def _send_report(config: dict, report: str, trade_date: str, dry_run: bool, chan
 def main() -> None:
     args = _parse_args()
     raw_config = load_config(args.config)
-    cfg = _daily_cfg(raw_config, args)
-    config = _apply_strategy_config(raw_config, cfg)
+    base_cfg = _daily_cfg(raw_config, args)
 
     trade_date = pd.Timestamp(args.today or datetime.now().strftime("%Y-%m-%d")).normalize()
     trade_date_str = trade_date.strftime("%Y-%m-%d")
+    _, initial_trading_calendar = _trading_calendar(raw_config)
+    cfg = _resolve_cfg_start_date(base_cfg, trade_date, initial_trading_calendar)
+    config = _apply_strategy_config(raw_config, cfg)
 
     # ── Regime-aware parameter switching (optional) ────────────────────────────
     try:

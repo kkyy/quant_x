@@ -1,0 +1,49 @@
+# Aggressive relative-strength overlay for the csi1000_balanced research line.
+#
+# Use with the csi1000-trained baseline model, for example:
+#   python run_backtest.py --config config/csi1000_balanced_overlay.yaml \
+#     --model-path models/lgbm_universe-csi1000_20260428_155547.pkl
+#
+# This is intentionally separate from daily_csi1000.yaml because walk-forward
+# validation showed weak years in 2021-2022. Treat it as a research overlay,
+# not the default practical candidate.
+
+market:
+  name: "csi300"
+  benchmark: "SH000300"
+
+strategy:
+  topk_dropout:
+    topk: 5
+    n_drop: 5
+    hold_thresh: 5
+  portfolio:
+    max_position_pct: 0.2
+    concentration_hard_limit: 0.3
+  universe_filter:
+    exclude_kcb: true
+    exclude_list: []
+    min_price: 3
+    exclude_st: true
+    exclude_suspended: true
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    industry_neutralize: false
+    stock_vs_sector_filter:
+      enabled: true
+      window: 20
+      keep_top_pct: 0.4
+
+daily_rebalance:
+  market: "csi300"
+  topk: 5
+  n_drop: 5
+  hold_thresh: 5
+  # Use one warm-up trading day so qlib can create the first target position on
+  # the signal day, without carrying a long historical replay from 2024.
+  start_date: "previous_trade_date"
+  model_path: "models/lgbm_universe-csi1000_20260428_155547.pkl"

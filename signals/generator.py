@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from .postprocess import postprocess_signal
+from .postprocess import postprocess_requires_price_data, postprocess_signal
 from ..data.utils import load_stock_names, code_to_qlib_instrument
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,10 @@ class SignalGenerator:
             if price_data is not None:
                 # Caller pre-loaded price data — use directly
                 pred = self.universe_filter.filter(pred, price_data=price_data)
-            elif self.universe_filter.requires_price_data():
+            elif (
+                self.universe_filter.requires_price_data()
+                or postprocess_requires_price_data(self.config)
+            ):
                 start_time = pred.index.get_level_values("datetime").min().strftime("%Y-%m-%d")
                 price_data = self.data_loader.load_price_data(
                     instruments=self.config.get("market", {}).get("name", "csi300"),
@@ -94,8 +97,21 @@ class SignalGenerator:
             else:
                 pred = self.universe_filter.filter(pred)
 
+        if price_data is None and postprocess_requires_price_data(self.config):
+            start_time = pred.index.get_level_values("datetime").min().strftime("%Y-%m-%d")
+            price_data = self.data_loader.load_price_data(
+                instruments=self.config.get("market", {}).get("name", "csi300"),
+                start_time=start_time,
+                end_time=trade_date,
+            )
+
         sector_map = self.sector_provider.get_map() if self.sector_provider is not None else None
-        pred = postprocess_signal(pred, config=self.config, sector_map=sector_map)
+        pred = postprocess_signal(
+            pred,
+            config=self.config,
+            sector_map=sector_map,
+            price_data=price_data,
+        )
 
         latest_dt = pred.index.get_level_values("datetime").max()
         latest_pred = pred.xs(latest_dt, level="datetime")

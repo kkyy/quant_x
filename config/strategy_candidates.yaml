@@ -33,6 +33,9 @@ selected:
   active_candidate: "csi800_aggressive_return"
   # More conservative starting point for manual trading research.
   conservative_candidate: "csi1000_balanced"
+  # Strong 2024-2026 overlay, but not robust enough across 2021-2022 walk-forward
+  # folds to replace the balanced baseline.
+  aggressive_overlay_candidate: "csi1000_relative_strength_overlay"
 
 candidates:
   csi800_aggressive_return:
@@ -86,6 +89,50 @@ candidates:
     suggested_next_checks:
       - "Use as the first practical low-frequency manual-selection candidate."
       - "Compare with csi800_stable_all_positive under equal position cap."
+      - "Optional overlay: enable signal.postprocess.stock_vs_sector_filter for relative-strength narrowing, but treat it as aggressive."
+
+  csi1000_relative_strength_overlay:
+    description: "Aggressive overlay on csi1000_balanced: keep stocks in the top 40% by 20-day stock-vs-sector relative strength, then use a concentrated TopkDropout portfolio."
+    train_universe: "csi1000"
+    eval_market: "csi300"
+    base_model: "models/lgbm_universe-csi1000_20260428_155547.pkl"
+    signal_postprocess:
+      daily_transform: "rank"
+      stock_vs_sector_filter:
+        enabled: true
+        window: 20
+        keep_top_pct: 0.4
+    strategy:
+      topk: 5
+      n_drop: 5
+      hold_thresh: 5
+    same_model_2024_2026:
+      start: "2024-01-01"
+      end: "2026-04-29"
+      cum_return: 3.8014
+      annual_return: 1.0233
+      sharpe: 3.6643
+      max_drawdown: -0.0955
+      rank_ic: 0.0593
+    multi_seed_2024_2026:
+      seeds: [42, 123, 2024, 7, 999]
+      cum_return: 3.58938
+      annual_return: 0.9812
+      sharpe: 3.52574
+      sharpe_std: 0.177762
+      max_drawdown: -0.10216
+    walk_forward_read:
+      positive_return_folds: 5
+      negative_years: ["2021", "2022"]
+      note: "Strong after 2023 and very strong in 2024, but weak in 2021-2022 under yearly model replacement; do not promote as standalone default."
+    artifacts:
+      comparison: "optimization_results/research_cycles/stock_vs_sector_methods_comparison_20260429.md"
+      robustness: "optimization_results/research_cycles/stock_vs_sector_20d_top40pct_robustness_20260429.md"
+      grid: "optimization_results/research_cycles/stock_vs_sector_filter_grid_csi1000_20260429.csv"
+    suggested_next_checks:
+      - "Test less concentrated variants around topk=10/15 and keep_top_pct=0.4/0.5."
+      - "Blend or switch with csi1000_balanced to reduce 2021-2022 regime risk."
+      - "Run slippage sensitivity before any production-like use."
 
   csi800_stable_all_positive:
     description: "All seven folds had positive return and Sharpe, but Sharpe dispersion is high."

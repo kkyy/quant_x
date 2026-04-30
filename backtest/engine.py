@@ -80,6 +80,7 @@ class BacktestEngine:
         seed: int = 42,
         open_cost: Optional[float] = None,
         close_cost: Optional[float] = None,
+        min_cost: Optional[float] = None,
     ) -> Tuple[pd.DataFrame, Dict]:
         """
         Run a single backtest.
@@ -144,14 +145,14 @@ class BacktestEngine:
         executor = SimulatorExecutor(
             time_per_step="day",
             generate_portfolio_metrics=True,
-            exchange_kwargs={
-                "freq": "day",
-                "deal_price": "close",
-                "open_cost":  open_cost  if open_cost  is not None else self._defaults["open_cost"],
-                "close_cost": close_cost if close_cost is not None else self._defaults["close_cost"],
-                "min_cost":   self._defaults["min_cost"],
-            },
         )
+        exchange_kwargs = {
+            "freq": "day",
+            "deal_price": "close",
+            "open_cost": open_cost if open_cost is not None else self._defaults["open_cost"],
+            "close_cost": close_cost if close_cost is not None else self._defaults["close_cost"],
+            "min_cost": min_cost if min_cost is not None else self._defaults["min_cost"],
+        }
 
         bt_start = start_time or self.config.get("backtest", {}).get("start_time", "2024-01-01")
         bt_end   = end_time   or datetime.now().strftime("%Y-%m-%d")
@@ -165,6 +166,7 @@ class BacktestEngine:
                 account=acct,
                 benchmark=None,
                 executor=executor,
+                exchange_kwargs=exchange_kwargs,
             )
         finally:
             if original_choice is not None:

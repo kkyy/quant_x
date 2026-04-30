@@ -3,9 +3,11 @@ from __future__ import annotations
 import pandas as pd
 
 from quant_ex.run_scheduled_rebalance import (
+    _convert_snapshot_to_actual_prices,
     _diff_positions,
     _next_trading_day,
     _previous_trading_day,
+    _resolve_cfg_start_date,
 )
 
 
@@ -45,3 +47,39 @@ def test_previous_trading_day_uses_calendar():
 
     assert previous_day == "2026-04-28"
     assert exact is True
+
+
+def test_resolve_cfg_start_date_signal_date_alias():
+    cfg = {"start_date": "signal_date", "_start_date_raw": "signal_date"}
+    calendar = pd.to_datetime(["2026-04-28", "2026-04-29", "2026-04-30"]).tolist()
+
+    resolved = _resolve_cfg_start_date(cfg, pd.Timestamp("2026-04-29"), calendar)
+
+    assert resolved["start_date"] == "2026-04-29"
+    assert cfg["start_date"] == "signal_date"
+
+
+def test_resolve_cfg_start_date_previous_trade_date_alias():
+    cfg = {"start_date": "previous_trade_date", "_start_date_raw": "previous_trade_date"}
+    calendar = pd.to_datetime(["2026-04-28", "2026-04-29", "2026-04-30"]).tolist()
+
+    resolved = _resolve_cfg_start_date(cfg, pd.Timestamp("2026-04-29"), calendar)
+
+    assert resolved["start_date"] == "2026-04-28"
+
+
+def test_convert_snapshot_to_actual_prices_uses_target_value(monkeypatch):
+    snapshot = {
+        "SH600001": {"shares": 500.0, "price": 40.0, "value": 20000.0},
+    }
+    monkeypatch.setattr(
+        "quant_ex.run_scheduled_rebalance._load_actual_close",
+        lambda instrument, trade_date: 12.0,
+    )
+
+    converted = _convert_snapshot_to_actual_prices(snapshot, "2026-04-29")
+
+    assert converted["SH600001"]["shares"] == 1600.0
+    assert converted["SH600001"]["price"] == 12.0
+    assert converted["SH600001"]["value"] == 19200.0
+    assert converted["SH600001"]["raw_target_value"] == 20000.0

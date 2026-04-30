@@ -44,7 +44,7 @@ from quant_ex.backtest.engine import BacktestEngine
 from quant_ex.backtest.grid_search import GridSearchBacktest
 from quant_ex.backtest.metrics import format_metrics
 from quant_ex.backtest.signal_diagnostics import compute_signal_ic
-from quant_ex.signals.postprocess import postprocess_signal
+from quant_ex.signals.postprocess import postprocess_requires_price_data, postprocess_signal
 
 logger = setup_logger("run_backtest")
 
@@ -104,9 +104,13 @@ def main(
 
     data_loader = DataLoader(config)
     universe_filter = UniverseFilter(config.get("strategy", {}))
+    post_cfg = config.get("signal", {}).get("postprocess", {})
     sector_provider = (
         SectorDataProvider(config)
-        if config.get("signal", {}).get("postprocess", {}).get("industry_neutralize", False)
+        if (
+            post_cfg.get("industry_neutralize", False)
+            or post_cfg.get("stock_vs_sector_filter", {}).get("enabled", False)
+        )
         else None
     )
     tcfg = config.get("training", {})
@@ -290,6 +294,7 @@ def _run_slippage_sensitivity(
     bt_cfg = config.get("backtest", {})
     base_open  = bt_cfg.get("open_cost",  0.0005)
     base_close = bt_cfg.get("close_cost", 0.0015)
+    base_min = bt_cfg.get("min_cost", 5)
 
     strategy_params = {
         "topk":        best_params.get("topk", 10),
@@ -309,6 +314,7 @@ def _run_slippage_sensitivity(
                     end_time=end,
                     open_cost=base_open * mult,
                     close_cost=base_close * mult,
+                    min_cost=base_min * mult,
                 )
                 m = _compute_metrics(report)
                 sharpe_list.append(m.get("sharpe", float("nan")))
@@ -321,6 +327,7 @@ def _run_slippage_sensitivity(
             "cost_multiplier": mult,
             "open_cost":  round(base_open  * mult, 6),
             "close_cost": round(base_close * mult, 6),
+            "min_cost": round(base_min * mult, 4),
             "mean_sharpe": round(float(np.nanmean(sharpe_list)), 4) if sharpe_list else float("nan"),
             "mean_annual_return": round(float(np.nanmean(ret_list)), 4)   if ret_list   else float("nan"),
         })
@@ -328,7 +335,7 @@ def _run_slippage_sensitivity(
     df = pd.DataFrame(rows)
     print("\n=== 滑点敏感性分析 (Slippage Sensitivity) ===")
     print(f"  基准参数: {strategy_params}")
-    print(f"  基础成本: open={base_open:.4f}  close={base_close:.4f}")
+    print(f"  基础成本: open={base_open:.4f}  close={base_close:.4f}  min={base_min:.2f}")
     print()
     print(df.to_string(index=False))
 
@@ -379,31 +386,45 @@ def _predict_for_market(
 
     dataset = data_loader.build_dataset(segments=segments, instruments=instruments)
 
-    if getattr(model, "factor_pipeline", None) is not None:
-        logger.info(
-            "模型含有 factor_pipeline，为 %s 重新计算额外因子 …",
-            instruments,
-        )
+    price_data = None
+    needs_full_price_data = (
+        getattr(model, "factor_pipeline", None) is not None
+        or postprocess_requires_price_data(config)
+    )
+
+    if needs_full_price_data:
         price_data = data_loader.load_price_data(
             instruments=instruments,
             start_time=tcfg.get("fit_start", "2015-01-01"),
             end_time=end or today,
         )
+
+    if getattr(model, "factor_pipeline", None) is not None:
+        logger.info(
+            "模型含有 factor_pipeline，为 %s 重新计算额外因子 …",
+            instruments,
+        )
         model.refresh_extra_factors(price_data)
 
     pred = model.predict(dataset, segment="test")
     if universe_filter.requires_price_data():
-        price_data = data_loader.load_price_data(
-            instruments=instruments,
-            start_time=start or tcfg.get("test_start", "2024-01-01"),
-            end_time=end or today,
-        )
+        if price_data is None:
+            price_data = data_loader.load_price_data(
+                instruments=instruments,
+                start_time=start or tcfg.get("test_start", "2024-01-01"),
+                end_time=end or today,
+            )
         pred = universe_filter.filter(pred, price_data=price_data)
     else:
         pred = universe_filter.filter(pred)
 
     sector_map = sector_provider.get_map() if sector_provider is not None else None
-    return postprocess_signal(pred, config=config, sector_map=sector_map)
+    return postprocess_signal(
+        pred,
+        config=config,
+        sector_map=sector_map,
+        price_data=price_data,
+    )
 
 
 def _signal_diagnostics_for_market(

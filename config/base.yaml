@@ -90,6 +90,12 @@ signal:
     # 行业中性化会使用 SectorDataProvider；默认关闭，避免强制依赖行业缓存/网络。
     industry_neutralize: false
     min_group_size: 5
+    # 个股相对行业强度过滤器：默认关闭。用于研究中的
+    # stock_vs_sector_20d_top40pct 叠加候选；打开后需要行业缓存/映射。
+    stock_vs_sector_filter:
+      enabled: false
+      window: 20
+      keep_top_pct: 0.4
   diagnostics:
     enabled: true
     horizon: 5

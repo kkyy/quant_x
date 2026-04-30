@@ -15,6 +15,7 @@ def postprocess_signal(
     config: dict,
     sector_map: Optional[Dict[str, str]] = None,
     size_data: Optional[pd.Series] = None,
+    price_data: Optional[pd.DataFrame] = None,
 ) -> pd.Series:
     """Apply configured cross-sectional signal transforms.
 
@@ -25,6 +26,8 @@ def postprocess_signal(
         size_data:   Optional log-market-cap Series (same MultiIndex) for
                      size neutralization. Only used when
                      ``signal.postprocess.size_neutralize`` is True.
+        price_data:  Optional price DataFrame used by configured relative
+                     strength filters.
     """
     cfg = config.get("signal", {}).get("postprocess", {})
     if pred is None or pred.empty or not cfg.get("enabled", True):
@@ -51,7 +54,24 @@ def postprocess_signal(
     else:
         logger.warning("Unknown signal daily_transform=%s; skipped", method)
 
+    signal = apply_stock_vs_sector_filter(
+        signal,
+        config=config,
+        sector_map=sector_map,
+        price_data=price_data,
+    )
+
     return signal.sort_index(kind="mergesort")
+
+
+def postprocess_requires_price_data(config: dict) -> bool:
+    """Return True when post-processing needs a price DataFrame from callers."""
+    cfg = config.get("signal", {}).get("postprocess", {})
+    if not cfg.get("enabled", True):
+        return False
+    return bool(
+        cfg.get("stock_vs_sector_filter", {}).get("enabled", False)
+    )
 
 
 def daily_rank(pred: pd.Series, pct: bool = True) -> pd.Series:
@@ -68,6 +88,113 @@ def daily_zscore(pred: pd.Series) -> pd.Series:
     mean = grouped.transform("mean")
     std = grouped.transform("std").replace(0, pd.NA)
     return ((pred - mean) / std).fillna(0.0)
+
+
+def apply_stock_vs_sector_filter(
+    pred: pd.Series,
+    config: dict,
+    sector_map: Optional[Dict[str, str]],
+    price_data: Optional[pd.DataFrame],
+) -> pd.Series:
+    """Keep only stocks with strong recent performance versus their sector.
+
+    Config shape:
+
+    signal:
+      postprocess:
+        stock_vs_sector_filter:
+          enabled: true
+          window: 20
+          keep_top_pct: 0.4
+
+    ``keep_top_pct=0.4`` means keep the top 40% by daily
+    ``stock_vs_sector_{window}d`` percentile rank.
+    """
+    cfg = (
+        config.get("signal", {})
+        .get("postprocess", {})
+        .get("stock_vs_sector_filter", {})
+    )
+    if not cfg.get("enabled", False):
+        return pred
+
+    if pred is None or pred.empty:
+        return pred
+    if price_data is None or price_data.empty:
+        logger.warning("stock_vs_sector_filter enabled but price_data is empty; skipped")
+        return pred
+    if not sector_map:
+        logger.warning("stock_vs_sector_filter enabled but sector_map is empty; skipped")
+        return pred
+
+    window = int(cfg.get("window", 20))
+    keep_top_pct = float(cfg.get("keep_top_pct", 0.4))
+    if not 0 < keep_top_pct <= 1:
+        logger.warning(
+            "stock_vs_sector_filter keep_top_pct=%s is invalid; skipped",
+            keep_top_pct,
+        )
+        return pred
+
+    try:
+        from quant_ex.features.sector_factors import SectorFactorEngine
+
+        factor_engine = SectorFactorEngine(
+            sector_map=sector_map,
+            concept_map={},
+            include_sector_momentum=False,
+            include_sector_relative=False,
+            include_stock_vs_sector=True,
+            stock_vs_sector_windows=[window],
+            include_sector_reversal=False,
+            include_sector_volatility=False,
+            include_sector_id=False,
+            include_concept=False,
+            include_concept_id=False,
+        )
+        factors = factor_engine.compute(price_data)
+        if factors is None or factors.empty:
+            logger.warning("stock_vs_sector_filter produced no factors; skipped")
+            return pred
+
+        col = f"stock_vs_sector_{window}d"
+        if col not in factors.columns:
+            logger.warning("stock_vs_sector_filter missing factor column %s; skipped", col)
+            return pred
+
+        factor_rank = daily_rank(factors[col], pct=True)
+        if (
+            isinstance(factor_rank.index, pd.MultiIndex)
+            and isinstance(pred.index, pd.MultiIndex)
+            and set(factor_rank.index.names) == set(pred.index.names)
+            and factor_rank.index.names != pred.index.names
+        ):
+            factor_rank = factor_rank.reorder_levels(pred.index.names)
+
+        threshold = 1.0 - keep_top_pct
+        keep = factor_rank.reindex(pred.index) >= threshold
+        filtered = pred[keep.fillna(False)]
+        if filtered.empty:
+            logger.warning(
+                "stock_vs_sector_filter removed all signal rows "
+                "(window=%s, keep_top_pct=%s); returning unfiltered signal",
+                window,
+                keep_top_pct,
+            )
+            return pred
+
+        logger.info(
+            "stock_vs_sector_filter kept %d/%d signal rows "
+            "(window=%s, keep_top_pct=%.2f)",
+            len(filtered),
+            len(pred),
+            window,
+            keep_top_pct,
+        )
+        return filtered
+    except Exception as exc:
+        logger.warning("stock_vs_sector_filter failed: %s; skipped", exc)
+        return pred
 
 
 def neutralize_by_group(

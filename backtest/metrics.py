@@ -15,6 +15,10 @@ def compute_metrics(
     """
     Compute annualised performance metrics from a qlib backtest report.
 
+    qlib reports trading cost in a separate ``cost`` column.  Portfolio
+    performance should be computed from net returns, so when ``cost`` exists
+    this function uses ``return - cost``.
+
     Args:
         report:          qlib backtest report DataFrame (must have a 'return' column)
         annual_factor:   trading days per year (default 252)
@@ -33,7 +37,13 @@ def compute_metrics(
     if report is None or len(report) == 0:
         return {}
 
-    rets = (report["return"] if "return" in report.columns else report.iloc[:, 0]).dropna()
+    if "return" in report.columns:
+        rets = report["return"].copy()
+        if "cost" in report.columns:
+            rets = rets - report["cost"].reindex(rets.index).fillna(0)
+    else:
+        rets = report.iloc[:, 0].copy()
+    rets = rets.dropna()
     if len(rets) == 0:
         return {}
 

@@ -25,6 +25,7 @@ from quant_ex.data.loader import DataLoader
 from quant_ex.data.universe import UniverseFilter
 from quant_ex.data.sector import SectorDataProvider
 from quant_ex.signals.generator import SignalGenerator
+from quant_ex.signals.postprocess import postprocess_requires_price_data
 from quant_ex.notify.pusher import NotificationPusher
 
 logger = setup_logger("run_daily")
@@ -140,7 +141,7 @@ def main(
     # Pre-load price data once so SignalGenerator.generate() can reuse it
     # instead of loading again internally (avoids 2-3× redundant qlib queries)
     instruments = config.get("market", {}).get("name", "csi300")
-    if universe_filter.requires_price_data():
+    if universe_filter.requires_price_data() or postprocess_requires_price_data(config):
         tcfg2 = config.get("training", {})
         price_start = tcfg2.get("test_start", "2024-01-01")
         price_data = data_loader.load_price_data(
