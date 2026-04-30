@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -6,10 +7,10 @@ from quant_ex.data.fetchers.base import BaseDataFetcher
 
 class ConcreteFetcher(BaseDataFetcher):
     """Minimal concrete impl for testing."""
-    def fetch(self, symbols, start_date, end_date):
+    def fetch(self, _symbols, _start_date, _end_date):
         return None
 
-    def refresh_cache(self, symbols):
+    def refresh_cache(self, _symbols):
         pass
 
 
@@ -30,18 +31,26 @@ def test_is_cache_fresh_missing_file(tmp_path):
 
 
 def test_is_cache_fresh_within_ttl(tmp_path):
+    from datetime import timedelta
+    import os
     f = ConcreteFetcher(cache_dir=str(tmp_path), cache_ttl_days=7)
     cache_file = tmp_path / "data.csv"
     cache_file.write_text("x")
+    # Set mtime to 3 days ago to actually test TTL boundary
+    old_mtime = (datetime.now() - timedelta(days=3)).timestamp()
+    os.utime(cache_file, (old_mtime, old_mtime))
     assert f._is_cache_fresh(cache_file) is True
 
 
 def test_is_cache_fresh_expired(tmp_path):
-    import time
-    f = ConcreteFetcher(cache_dir=str(tmp_path), cache_ttl_days=0)
+    from datetime import timedelta
+    import os
+    f = ConcreteFetcher(cache_dir=str(tmp_path), cache_ttl_days=1)
     cache_file = tmp_path / "data.csv"
     cache_file.write_text("x")
-    # TTL=0 means always stale
+    # Set mtime to 2 days ago (past TTL=1)
+    old_mtime = (datetime.now() - timedelta(days=2)).timestamp()
+    os.utime(cache_file, (old_mtime, old_mtime))
     assert f._is_cache_fresh(cache_file) is False
 
 
@@ -55,5 +64,6 @@ def test_to_qlib_symbol():
 
 def test_infer_exchange():
     assert BaseDataFetcher.infer_exchange("600000") == "SH"
+    assert BaseDataFetcher.infer_exchange("900001") == "SH"
     assert BaseDataFetcher.infer_exchange("000001") == "SZ"
     assert BaseDataFetcher.infer_exchange("300001") == "SZ"
