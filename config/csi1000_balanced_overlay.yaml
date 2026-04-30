@@ -43,6 +43,8 @@ daily_rebalance:
   topk: 5
   n_drop: 5
   hold_thresh: 5
+  account: 150000
+  notify_channel: "bark"
   # Use one warm-up trading day so qlib can create the first target position on
   # the signal day, without carrying a long historical replay from 2024.
   start_date: "previous_trade_date"
