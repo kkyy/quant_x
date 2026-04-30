@@ -1,7 +1,6 @@
 import pytest
 import pandas as pd
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from quant_ex.data.fetchers.financial_fetcher import FinancialFetcher
 
 
