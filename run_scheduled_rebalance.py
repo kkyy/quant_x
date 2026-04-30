@@ -844,6 +844,25 @@ def main() -> None:
     except Exception as exc:
         logger.warning("Regime switch integration skipped: %s", exc)
 
+    # ── 刷新外部数据缓存 ─────────────────────────────────────────────────────────
+    try:
+        from quant_ex.data.fetchers import NorthboundFetcher, FinancialFetcher
+        feat_cfg = config.get("model", {}).get("features", {})
+        factor_names = [f.get("name") for f in feat_cfg.get("factors", []) if f.get("name")]
+
+        if "northbound" in factor_names:
+            NorthboundFetcher(cache_dir="./cache/northbound", cache_ttl_days=1).refresh_cache([])
+            logger.info("北向资金缓存已刷新")
+
+        if "fundamental" in factor_names:
+            fund_cfg = next((f for f in feat_cfg.get("factors", []) if f.get("name") == "fundamental"), {})
+            metrics = fund_cfg.get("metrics", ["valuation"])
+            if any(m not in ("pe_ttm", "pb", "ps_ttm", "dyr", "valuation") for m in metrics):
+                FinancialFetcher(cache_dir="./cache/financial", cache_ttl_days=7).refresh_cache([])
+                logger.info("财务数据缓存已刷新")
+    except Exception as exc:
+        logger.warning(f"外部数据缓存刷新跳过: {exc}")
+
     logger.info("=== 收盘后调仓任务 %s ===", trade_date_str)
 
     if args.remind:
