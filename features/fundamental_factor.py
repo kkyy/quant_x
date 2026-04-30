@@ -4,12 +4,30 @@ Fetches historical PE/PB/PS/dividend yield per stock using akshare's
 ``stock_a_lg_indicator`` API, caches per-stock CSVs locally, and aligns the
 data to the price_data MultiIndex for use in the feature pipeline.
 
+For extended metrics (profitability, growth, cashflow), delegates to
+``FinancialFetcher`` which uses Sina/EM financial analysis indicators.
+
 Supported metrics
 -----------------
+**Valuation (akshare direct):**
 pe_ttm      Price-earnings ratio (trailing twelve months)
 pb          Price-to-book ratio
 ps_ttm      Price-to-sales ratio (TTM)
 dyr         Dividend yield (%)
+
+**Profitability (via FinancialFetcher):**
+roe         Return on equity (%)
+roa         Return on assets (%)
+gross_margin  Gross margin (%)
+net_margin    Net margin (%)
+
+**Growth (via FinancialFetcher):**
+revenue_growth  Revenue growth (%)
+profit_growth   Profit growth (%)
+
+**Cashflow (via FinancialFetcher):**
+ocf_to_np   Operating cash flow to net profit ratio (%)
+fcf_yield   Free cash flow yield (%)
 
 Notes
 -----
@@ -25,6 +43,10 @@ Example config (model.yaml)
           metrics: [pe_ttm, pb]
           cache_dir: ./cache/fundamental
           cache_ttl_days: 7
+    # Extended metrics via group names:
+        - name: fundamental
+          metrics: [valuation, profitability, growth]
+          include_change: true
 """
 from __future__ import annotations
 
@@ -41,6 +63,18 @@ from .base import BaseFactor, FactorRegistry
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_METRICS = ["pe_ttm", "pb", "ps_ttm", "dyr"]
+
+# ── Metric groups for extended fundamental factors ─────────────────────────
+_METRIC_GROUPS = {
+    "valuation": ["pe_ttm", "pb", "ps_ttm", "dyr"],
+    "profitability": ["roe", "roa", "gross_margin", "net_margin"],
+    "growth": ["revenue_growth", "profit_growth"],
+    "cashflow": ["ocf_to_np", "fcf_yield"],
+}
+
+_ALL_METRICS: List[str] = []
+for _group_metrics in _METRIC_GROUPS.values():
+    _ALL_METRICS.extend(_group_metrics)
 
 # akshare column name → our metric name
 _COL_MAP = {
@@ -59,13 +93,18 @@ _COL_MAP = {
 
 @FactorRegistry.register("fundamental")
 class FundamentalFactor(BaseFactor):
-    """Historical valuation factors fetched from akshare.
+    """Historical valuation and extended fundamental factors.
 
     Parameters
     ----------
     metrics : list[str], optional
-        Subset of ``["pe_ttm", "pb", "ps_ttm", "dyr"]`` to compute.
-        Defaults to ``["pe_ttm", "pb"]``.
+        Subset of metric names or group names to compute.
+        Group names: ``"valuation"``, ``"profitability"``, ``"growth"``,
+        ``"cashflow"``.
+        Individual names: ``"pe_ttm"``, ``"pb"``, ``"roe"``, etc.
+        Defaults to ``["valuation"]`` for backward compatibility.
+    include_change : bool
+        If True, add change factors (roe_chg, margin_chg, rev_accel).
     cache_dir : str
         Directory for per-stock CSV caches.
     cache_ttl_days : int
@@ -74,36 +113,78 @@ class FundamentalFactor(BaseFactor):
         Thread count for parallel per-stock fetches.
     precomputed : DataFrame, optional
         Provide your own (instrument, datetime) MultiIndex DataFrame to skip
-        the akshare fetch entirely — useful for testing or custom data.
+        the fetch entirely — useful for testing or custom data.
     """
 
     def __init__(
         self,
         metrics: Optional[List[str]] = None,
+        include_change: bool = False,
         cache_dir: str = "./cache/fundamental",
         cache_ttl_days: int = 7,
         max_workers: int = 4,
         precomputed: Optional[pd.DataFrame] = None,
     ):
-        self.metrics = metrics or ["pe_ttm", "pb"]
+        self.include_change = include_change
         self.cache_dir = Path(cache_dir)
         self.cache_ttl_days = cache_ttl_days
         self.max_workers = max_workers
         self.precomputed = precomputed
 
+        # Expand group names to individual metrics; default = ["valuation"]
+        raw_metrics = metrics if metrics is not None else ["valuation"]
+        expanded: List[str] = []
+        for m in raw_metrics:
+            if m in _METRIC_GROUPS:
+                expanded.extend(_METRIC_GROUPS[m])
+            else:
+                expanded.append(m)
+        self.metrics = expanded
+
+        # Determine fetch path: use FinancialFetcher when any non-valuation
+        # metric is requested
+        valuation_set = set(_METRIC_GROUPS["valuation"])
+        non_valuation = [m for m in self.metrics if m not in valuation_set]
+        self._use_fetcher = len(non_valuation) > 0
+
+    # ── backward compat attribute ───────────────────────────────────────────
+
+    def __setstate__(self, state):
+        """Ensure old pickles get new attributes with safe defaults."""
+        self.__dict__.update(state)
+        self._ensure_runtime_defaults()
+
+    def _ensure_runtime_defaults(self):
+        """Fill in attributes added after initial release."""
+        if not hasattr(self, "include_change"):
+            self.include_change = False
+        if not hasattr(self, "_use_fetcher"):
+            self._use_fetcher = False
+
     # ── BaseFactor interface ──────────────────────────────────────────────────
 
     def compute(self, price_data: pd.DataFrame) -> Optional[pd.DataFrame]:
         if self.precomputed is not None:
-            return self._align(self.precomputed, price_data)
+            result = self._align(self.precomputed, price_data)
+        elif self._use_fetcher:
+            result = self._compute_via_fetcher(price_data)
+        else:
+            # Old direct-akshare path for valuation-only metrics
+            instruments = list(price_data.index.get_level_values(0).unique())
+            all_frames = self._fetch_all(instruments)
+            if not all_frames:
+                return None
+            combined = pd.concat(all_frames)
+            result = self._align(combined, price_data)
 
-        instruments = list(price_data.index.get_level_values(0).unique())
-        all_frames = self._fetch_all(instruments)
-        if not all_frames:
+        if result is None:
             return None
 
-        combined = pd.concat(all_frames)
-        return self._align(combined, price_data)
+        # Add change factors if requested
+        if self.include_change:
+            result = self._compute_change_factors(result, price_data)
+
+        return result
 
     # ── internals ────────────────────────────────────────────────────────────
 
@@ -222,3 +303,81 @@ class FundamentalFactor(BaseFactor):
             [[qlib_symbol], raw.index], names=["instrument", "datetime"]
         )
         return raw
+
+    # ── Extended metrics via FinancialFetcher ─────────────────────────────────
+
+    def _compute_via_fetcher(self, price_data: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Fetch extended fundamental metrics via FinancialFetcher.
+
+        Combines valuation data from the old akshare path with financial
+        statement data from FinancialFetcher.
+        """
+        instruments = list(price_data.index.get_level_values(0).unique())
+        all_frames: List[pd.DataFrame] = []
+
+        # Determine which metrics come from which source
+        valuation_metrics = [m for m in self.metrics if m in _METRIC_GROUPS["valuation"]]
+        extended_metrics = [m for m in self.metrics if m not in _METRIC_GROUPS["valuation"]]
+
+        # Fetch valuation metrics via old akshare path if needed
+        if valuation_metrics:
+            valuation_frames = self._fetch_all(instruments)
+            if valuation_frames:
+                val_combined = pd.concat(valuation_frames)
+                # Filter to only requested valuation columns
+                val_cols = [c for c in valuation_metrics if c in val_combined.columns]
+                if val_cols:
+                    all_frames.append(val_combined[val_cols])
+
+        # Fetch extended metrics via FinancialFetcher
+        if extended_metrics:
+            try:
+                from ..data.fetchers.financial_fetcher import FinancialFetcher
+
+                fetcher = FinancialFetcher(
+                    cache_dir=str(self.cache_dir.parent / "financial"),
+                    cache_ttl_days=self.cache_ttl_days,
+                )
+                dates = price_data.index.get_level_values(1)
+                start_date = str(dates.min().date())
+                end_date = str(dates.max().date())
+                ext_data = fetcher.fetch(instruments, start_date, end_date)
+                if ext_data is not None and not ext_data.empty:
+                    ext_cols = [c for c in extended_metrics if c in ext_data.columns]
+                    if ext_cols:
+                        all_frames.append(ext_data[ext_cols])
+            except Exception as exc:
+                logger.warning(
+                    f"FundamentalFactor: FinancialFetcher failed, "
+                    f"extended metrics unavailable: {exc}"
+                )
+
+        if not all_frames:
+            return None
+
+        combined = pd.concat(all_frames, axis=1)
+        return self._align(combined, price_data)
+
+    def _compute_change_factors(
+        self, data: pd.DataFrame, price_data: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Compute period-over-period change factors.
+
+        Adds:
+        - roe_chg: ROE change (current - prior period)
+        - margin_chg: gross_margin change
+        - rev_accel: revenue_growth acceleration (current - prior)
+        """
+        result = data.copy()
+
+        # Compute changes within each instrument group
+        if "roe" in result.columns:
+            result["roe_chg"] = result.groupby(level=0)["roe"].diff()
+
+        if "gross_margin" in result.columns:
+            result["margin_chg"] = result.groupby(level=0)["gross_margin"].diff()
+
+        if "revenue_growth" in result.columns:
+            result["rev_accel"] = result.groupby(level=0)["revenue_growth"].diff()
+
+        return result
