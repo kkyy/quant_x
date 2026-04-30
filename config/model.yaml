@@ -142,6 +142,31 @@ model:
       #   path: "./cache/mined_factors.json"
       #   top_n: 20
 
+      # 北向资金因子 — 取消注释以启用
+      # 生成的特征:
+      #   nb_hold_pct             北向持股占流通股比
+      #   nb_hold_mv              北向持股市值
+      #   nb_net_buy_ratio        北向净买入占比
+      #   nb_hold_pct_chg_{w}d    持股占比 w 日变化量
+      #   nb_net_buy_ma_{w}d      w 日净买入均值
+      #   nb_sector_hold_pct      行业北向持股占比均值
+      #   nb_vs_sector_{w}d       个股 vs 行业北向持股变化
+      # - name: "northbound"
+      #   windows: [5, 10, 20, 60]
+      #   include_raw: true
+      #   include_change: true
+
+      # 基本面因子 — 取消注释以启用扩展指标
+      # metrics 支持分组名和单独列名:
+      #   valuation:     pe_ttm, pb, ps_ttm, dyr
+      #   profitability: roe, roa, gross_margin, net_margin
+      #   growth:        revenue_growth, profit_growth
+      #   cashflow:      ocf_to_np, fcf_yield
+      # 变化量: roe_chg, margin_chg, rev_accel (include_change=true)
+      # - name: "fundamental"
+      #   metrics: ["valuation", "profitability", "growth", "cashflow"]
+      #   include_change: true
+
     # ── Legacy flags（已被 factors 列表取代，仍向下兼容）────────
     use_sector_factors: false
     sector_momentum_windows: [5, 10, 20, 60]
