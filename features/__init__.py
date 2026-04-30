@@ -4,6 +4,7 @@ from .technical_factors import TechnicalFactorEngine
 from .factor_mining import FactorMiner, FactorResult, MinedFactorLoader
 from .csv_factor import CsvFactor
 from .fundamental_factor import FundamentalFactor
+from .northbound_factor import NorthboundFactor
 from .library import FactorMeta, FactorLibrary, FactorCleaner, FactorEvaluator, FactorScreener
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "MinedFactorLoader",
     "CsvFactor",
     "FundamentalFactor",
+    "NorthboundFactor",
     # Factor library (catalog, cleaning, screening)
     "FactorMeta",
     "FactorLibrary",

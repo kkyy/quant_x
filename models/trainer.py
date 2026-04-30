@@ -29,7 +29,7 @@ import importlib as _il
 for _m in ("lgbm_model", "linear_model", "xgb_model", "nn_model"):
     _il.import_module(f".{_m}", package=__name__.rsplit(".", 1)[0])
 for _f in ("sector_factors", "technical_factors", "factor_mining", "regime_features",
-           "csv_factor", "fundamental_factor"):
+           "csv_factor", "fundamental_factor", "northbound_factor"):
     try:
         _il.import_module(f"..features.{_f}", package=__name__.rsplit(".", 1)[0])
     except ImportError as _e:
