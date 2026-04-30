@@ -56,8 +56,15 @@ class BaseDataFetcher(ABC):
         return f"{exchange}{bare_code}"
 
     @staticmethod
+    def to_exchange(qlib_symbol: str) -> str:
+        """SH600000 -> SH"""
+        return qlib_symbol[:2]
+
+    @staticmethod
     def infer_exchange(bare_code: str) -> str:
-        """Infer exchange from 6-digit code: 6/9->SH, 0/3->SZ."""
+        """Infer exchange from 6-digit code: 6/9->SH, 4/8->BJ, 0/3->SZ."""
         if bare_code.startswith(("6", "9")):
             return "SH"
+        if bare_code.startswith(("4", "8")):
+            return "BJ"
         return "SZ"

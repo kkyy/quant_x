@@ -62,8 +62,15 @@ def test_to_qlib_symbol():
     assert BaseDataFetcher.to_qlib_symbol("600000", "SH") == "SH600000"
 
 
+def test_to_exchange():
+    assert BaseDataFetcher.to_exchange("SH600000") == "SH"
+    assert BaseDataFetcher.to_exchange("SZ000001") == "SZ"
+    assert BaseDataFetcher.to_exchange("BJ430047") == "BJ"
+
+
 def test_infer_exchange():
     assert BaseDataFetcher.infer_exchange("600000") == "SH"
     assert BaseDataFetcher.infer_exchange("900001") == "SH"
+    assert BaseDataFetcher.infer_exchange("430047") == "BJ"
     assert BaseDataFetcher.infer_exchange("000001") == "SZ"
     assert BaseDataFetcher.infer_exchange("300001") == "SZ"
