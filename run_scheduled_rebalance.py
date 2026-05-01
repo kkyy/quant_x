@@ -675,6 +675,8 @@ def _to_qlib_code(code: str) -> str:
     code = str(code).strip()
     if len(code) != 6 or not code.isdigit():
         return code
+    if code.startswith("920"):
+        return f"BJ{code}"
     prefix = int(code[0])
     if prefix in (0, 2, 3):
         return f"SZ{code}"

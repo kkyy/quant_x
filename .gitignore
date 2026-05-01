@@ -54,8 +54,17 @@ config/secret*.yaml
 # ============================================================
 # Project: Generated / Cache
 # ============================================================
-# Sector classification cache (auto-refreshed from akshare)
-cache/
+# Cache policy:
+# - default: ignore everything under cache/
+# - allow-list only the durable cache artifacts we intentionally version:
+#   cache/financial/*.csv, cache/northbound/*.csv and cache/sector_map.json
+cache/**
+!cache/
+!cache/financial/
+!cache/financial/*.csv
+!cache/northbound/
+!cache/northbound/*.csv
+!cache/sector_map.json
 
 # Model artifacts (can be large, stored in MLflow or elsewhere)
 models_saved/
@@ -79,6 +88,8 @@ optimization_results/
 
 # Factor mining results
 cache/mined_factors.json
+cache/financial_sector_snapshot.csv
+cache/sector_ts.txt
 
 # ============================================================
 # Logs
@@ -115,6 +126,12 @@ qlib_bin.tar.gz*
 *.parquet
 *.feather
 *.arrow
+
+# ============================================================
+# Frontend
+# ============================================================
+web/frontend/node_modules/
+web/frontend/dist/
 
 # ============================================================
 # OS / Misc

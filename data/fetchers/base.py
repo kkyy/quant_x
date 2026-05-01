@@ -62,7 +62,15 @@ class BaseDataFetcher(ABC):
 
     @staticmethod
     def infer_exchange(bare_code: str) -> str:
-        """Infer exchange from 6-digit code: 6/9->SH, 4/8->BJ, 0/3->SZ."""
+        """Infer exchange from 6-digit code.
+
+        Mapping:
+        - 6xx, 9xx (excl. 920xxx) -> SH
+        - 920xxx, 4xx, 8xx       -> BJ  (北交所)
+        - 0xx, 3xx               -> SZ
+        """
+        if bare_code.startswith("920"):
+            return "BJ"
         if bare_code.startswith(("6", "9")):
             return "SH"
         if bare_code.startswith(("4", "8")):

@@ -16,6 +16,7 @@ def test_fetch_indicators_returns_multiindex(fetcher, tmp_path):
         "总资产利润率(%)": [5.2, 5.5],
         "销售毛利率(%)": [40.0, 41.0],
         "销售净利率(%)": [15.0, 15.5],
+        "总资产周转率(次)": [0.5, 0.6],
         "主营业务收入增长率(%)": [10.0, 12.0],
         "净利润增长率(%)": [8.0, 9.0],
         "经营现金净流量与净利润的比率(%)": [80.0, 85.0],
@@ -26,6 +27,7 @@ def test_fetch_indicators_returns_multiindex(fetcher, tmp_path):
     assert result.index.names == ["instrument", "datetime"]
     assert "roe" in result.columns
     assert "gross_margin" in result.columns
+    assert "asset_turnover" in result.columns
 
 
 def test_fetch_indicators_caches_result(fetcher, tmp_path):
@@ -64,6 +66,7 @@ def test_normalize_indicators_column_mapping(fetcher):
         "总资产利润率(%)": [5.2],
         "销售毛利率(%)": [40.0],
         "销售净利率(%)": [15.0],
+        "存货周转率(次)": [2.5],
         "主营业务收入增长率(%)": [10.0],
         "净利润增长率(%)": [8.0],
         "经营现金净流量与净利润的比率(%)": [80.0],
@@ -73,6 +76,32 @@ def test_normalize_indicators_column_mapping(fetcher):
     assert "roa" in result.columns
     assert "revenue_growth" in result.columns
     assert "ocf_to_np" in result.columns
+    assert "inventory_turnover" in result.columns
+
+
+def test_merge_indicator_frames_uses_em_to_fill_missing_fields(fetcher):
+    primary = pd.DataFrame(
+        {
+            "gross_margin": [pd.NA],
+            "net_margin": [15.0],
+        },
+        index=pd.MultiIndex.from_tuples(
+            [("SH600519", pd.Timestamp("2025-03-31"))],
+            names=["instrument", "datetime"],
+        ),
+    )
+    fallback = pd.DataFrame(
+        {
+            "gross_margin": [40.0],
+            "asset_turnover": [0.7],
+        },
+        index=primary.index,
+    )
+
+    result = fetcher._merge_indicator_frames(primary, fallback)
+
+    assert result.loc[("SH600519", pd.Timestamp("2025-03-31")), "gross_margin"] == 40.0
+    assert result.loc[("SH600519", pd.Timestamp("2025-03-31")), "asset_turnover"] == 0.7
 
 
 def test_fallback_to_em(fetcher, tmp_path):

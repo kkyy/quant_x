@@ -123,20 +123,41 @@ def main(
 
     # ── 刷新外部数据缓存 ────────────────────────────────────────────────────────
     try:
-        from quant_ex.data.fetchers import NorthboundFetcher, FinancialFetcher
+        from quant_ex.data.fetchers import (
+            NorthboundFetcher, FinancialFetcher, PledgeFetcher,
+            MarginTradeFetcher, InsiderTradeFetcher, AnalystForecastFetcher,
+            ShareholderCountFetcher, DividendFetcher, ValuationFetcher,
+            BalanceSheetFetcher, EarningsGuidanceFetcher, InstitutionalHoldFetcher,
+            RepurchaseFetcher, InstitutionalVisitFetcher,
+        )
         feat_cfg = config.get("model", {}).get("features", {})
         factor_names = [f.get("name") for f in feat_cfg.get("factors", []) if f.get("name")]
 
-        if "northbound" in factor_names:
-            NorthboundFetcher(cache_dir="./cache/northbound", cache_ttl_days=1).refresh_cache([])
-            logger.info("北向资金缓存已刷新")
+        _FETCHER_MAP = {
+            "northbound": (NorthboundFetcher, "./cache/northbound", 1),
+            "fundamental": (FinancialFetcher, "./cache/financial", 7),
+            "pledge": (PledgeFetcher, "./cache/pledge", 1),
+            "margin": (MarginTradeFetcher, "./cache/margin", 1),
+            "insider": (InsiderTradeFetcher, "./cache/insider", 1),
+            "analyst": (AnalystForecastFetcher, "./cache/analyst", 3),
+            "shareholder": (ShareholderCountFetcher, "./cache/shareholder", 30),
+            "dividend": (DividendFetcher, "./cache/dividend", 30),
+            "valuation": (ValuationFetcher, "./cache/valuation", 1),
+            "balance_sheet": (BalanceSheetFetcher, "./cache/balance_sheet", 30),
+            "earnings_guidance": (EarningsGuidanceFetcher, "./cache/earnings_guidance", 30),
+            "institutional": (InstitutionalHoldFetcher, "./cache/institutional", 30),
+            "repurchase": (RepurchaseFetcher, "./cache/repurchase", 1),
+            "visit": (InstitutionalVisitFetcher, "./cache/visit", 7),
+        }
 
-        if "fundamental" in factor_names:
-            fund_cfg = next((f for f in feat_cfg.get("factors", []) if f.get("name") == "fundamental"), {})
-            metrics = fund_cfg.get("metrics", ["valuation"])
-            if any(m not in ("pe_ttm", "pb", "ps_ttm", "dyr", "valuation") for m in metrics):
-                FinancialFetcher(cache_dir="./cache/financial", cache_ttl_days=7).refresh_cache([])
-                logger.info("财务数据缓存已刷新")
+        for fname in factor_names:
+            if fname in _FETCHER_MAP:
+                cls, cache_dir, ttl = _FETCHER_MAP[fname]
+                try:
+                    cls(cache_dir=cache_dir, cache_ttl_days=ttl).refresh_cache([])
+                    logger.info(f"{fname} 缓存已刷新")
+                except Exception as e:
+                    logger.warning(f"{fname} 缓存刷新失败: {e}")
     except Exception as exc:
         logger.warning(f"外部数据缓存刷新跳过: {exc}")
 

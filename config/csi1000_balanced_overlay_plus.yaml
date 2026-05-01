@@ -1,0 +1,48 @@
+# Less concentrated overlay iteration for the csi1000_balanced research line.
+#
+# Goal: keep most of the stock-vs-sector post-filter alpha while reducing the
+# concentration of the original topk=5 aggressive overlay.
+#
+# Use with:
+#   python run_backtest.py --config config/csi1000_balanced_overlay_plus.yaml \
+#     --model-path models/lgbm_universe-csi1000_20260428_155547.pkl
+
+market:
+  name: "csi300"
+  benchmark: "SH000300"
+
+strategy:
+  topk_dropout:
+    topk: 10
+    n_drop: 5
+    hold_thresh: 8
+  portfolio:
+    max_position_pct: 0.12
+    concentration_hard_limit: 0.22
+  universe_filter:
+    exclude_kcb: true
+    exclude_list: []
+    min_price: 3
+    exclude_st: true
+    exclude_suspended: true
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    industry_neutralize: false
+    stock_vs_sector_filter:
+      enabled: true
+      window: 20
+      keep_top_pct: 0.5
+
+daily_rebalance:
+  market: "csi300"
+  topk: 10
+  n_drop: 5
+  hold_thresh: 8
+  account: 150000
+  notify_channel: "bark"
+  start_date: "previous_trade_date"
+  model_path: "models/lgbm_universe-csi1000_20260428_155547.pkl"

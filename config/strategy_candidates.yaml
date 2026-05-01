@@ -36,6 +36,9 @@ selected:
   # Strong 2024-2026 overlay, but not robust enough across 2021-2022 walk-forward
   # folds to replace the balanced baseline.
   aggressive_overlay_candidate: "csi1000_relative_strength_overlay"
+  # Preferred next overlay iteration: still materially stronger than baseline,
+  # but less concentrated than the topk=5 aggressive overlay.
+  preferred_overlay_candidate: "csi1000_overlay_plus"
 
 candidates:
   csi800_aggressive_return:
@@ -133,6 +136,70 @@ candidates:
       - "Test less concentrated variants around topk=10/15 and keep_top_pct=0.4/0.5."
       - "Blend or switch with csi1000_balanced to reduce 2021-2022 regime risk."
       - "Run slippage sensitivity before any production-like use."
+
+  csi1000_overlay_plus:
+    description: "Less concentrated relative-strength overlay: keep the top 50% by 20-day stock-vs-sector strength, then use topk=10 / n_drop=5 / hold=8."
+    train_universe: "csi1000"
+    eval_market: "csi300"
+    base_model: "models/lgbm_universe-csi1000_20260428_155547.pkl"
+    config: "config/csi1000_balanced_overlay_plus.yaml"
+    signal_postprocess:
+      daily_transform: "rank"
+      stock_vs_sector_filter:
+        enabled: true
+        window: 20
+        keep_top_pct: 0.5
+    strategy:
+      topk: 10
+      n_drop: 5
+      hold_thresh: 8
+    same_model_2024_2026_grid_read:
+      cum_return: 2.5308
+      annual_return: 0.7624
+      sharpe: 3.2157
+      max_drawdown: -0.1463
+      rank_ic: 0.0534
+      note: "From stock_vs_sector_filter_grid_csi1000_20260429.csv; materially above baseline and less concentrated than the topk=5 overlay."
+    rationale:
+      - "Compared with the baseline 15/3/5, it retains a large part of the overlay alpha uplift."
+      - "Compared with the aggressive overlay 5/5/5, it reduces concentration risk by doubling breadth."
+      - "Hold=8 is consistent with the stronger medium-horizon trend expression of the filter."
+    suggested_next_checks:
+      - "Run yearly split and walk-forward validation for this exact config, not just the same-model grid read."
+      - "Compare with the baseline under equal position caps and net-cost reporting."
+      - "Use as the main next-step overlay candidate before testing regime switching."
+
+  csi1000_overlay_practical:
+    description: "Practical balanced overlay: keep the top 50% by 20-day stock-vs-sector strength, then use topk=15 / n_drop=5 / hold=5."
+    train_universe: "csi1000"
+    eval_market: "csi300"
+    base_model: "models/lgbm_universe-csi1000_20260428_155547.pkl"
+    config: "config/csi1000_balanced_overlay_practical.yaml"
+    signal_postprocess:
+      daily_transform: "rank"
+      stock_vs_sector_filter:
+        enabled: true
+        window: 20
+        keep_top_pct: 0.5
+    strategy:
+      topk: 15
+      n_drop: 5
+      hold_thresh: 5
+    same_model_2024_2026_grid_read:
+      cum_return: 1.8675
+      annual_return: 0.6051
+      sharpe: 2.9443
+      max_drawdown: -0.1291
+      rank_ic: 0.0534
+      note: "From stock_vs_sector_filter_grid_csi1000_20260429.csv; closest to the original balanced baseline in breadth while still clearly stronger on the same window."
+    rationale:
+      - "It keeps the baseline topk breadth, which should make manual selection and risk control easier."
+      - "It is a stronger practical candidate than the raw baseline on the 2024-2026 same-model window."
+      - "This is the safer overlay to test first if the topk=10 version still feels too concentrated."
+    suggested_next_checks:
+      - "Run multi-seed and year-split validation for this config."
+      - "Compare turnover and slippage sensitivity against csi1000_overlay_plus."
+      - "Use as fallback if the plus variant loses too much robustness in 2021-2022 walk-forward."
 
   csi800_stable_all_positive:
     description: "All seven folds had positive return and Sharpe, but Sharpe dispersion is high."

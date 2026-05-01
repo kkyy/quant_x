@@ -7,6 +7,7 @@ Also fetches cash flow statement for free cash flow computation.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from datetime import date
 from pathlib import Path
@@ -30,6 +31,16 @@ _SINA_COL_MAP = {
     "净利润增长率(%)": "profit_growth",
     "摊薄每股收益(元)": "eps",
     "经营现金净流量与净利润的比率(%)": "ocf_to_np",
+    "应收账款周转率(次)": "ar_turnover",
+    "应收账款周转天数(天)": "ar_turn_days",
+    "存货周转率(次)": "inventory_turnover",
+    "存货周转天数(天)": "inventory_turn_days",
+    "固定资产周转率(次)": "fixed_asset_turnover",
+    "总资产周转率(次)": "asset_turnover",
+    "总资产周转天数(天)": "asset_turn_days",
+    "流动资产周转率(次)": "current_asset_turnover",
+    "流动资产周转天数(天)": "current_asset_turn_days",
+    "股东权益周转率(次)": "equity_turnover",
 }
 
 # All metrics we can produce from the Sina interface
@@ -39,8 +50,9 @@ _SINA_METRICS = list(set(_SINA_COL_MAP.values()))
 class FinancialFetcher(BaseDataFetcher):
     """Fetch and cache financial fundamental data."""
 
-    def __init__(self, cache_dir: str = "./cache/financial", cache_ttl_days: int = 7):
+    def __init__(self, cache_dir: str = "./cache/financial", cache_ttl_days: int = 7, max_workers: int = 8):
         super().__init__(cache_dir=cache_dir, cache_ttl_days=cache_ttl_days)
+        self.max_workers = max_workers
 
     def fetch(self, symbols: List[str], start_date: str, end_date: str) -> Optional[pd.DataFrame]:
         self.refresh_cache(symbols)
@@ -48,8 +60,19 @@ class FinancialFetcher(BaseDataFetcher):
 
     def refresh_cache(self, symbols: List[str]) -> None:
         self._ensure_cache_dir()
-        for sym in symbols:
-            self._fetch_indicators(sym)
+        if len(symbols) <= 1:
+            for sym in symbols:
+                self._fetch_indicators(sym)
+            return
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+            futures = {pool.submit(self._fetch_indicators, sym): sym for sym in symbols}
+            for future in as_completed(futures):
+                sym = futures[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.warning("FinancialFetcher: refresh failed for %s: %s", sym, exc)
 
     # ── Per-stock indicators ───────────────────────────────────────────────
 
@@ -69,29 +92,46 @@ class FinancialFetcher(BaseDataFetcher):
     def _fetch_indicators_with_fallback(self, qlib_symbol: str) -> Optional[pd.DataFrame]:
         # Primary: Sina interface (6-digit code)
         try:
-            raw = self._call_akshare_sina(qlib_symbol)
+            raw_sina = self._call_akshare_sina(qlib_symbol)
         except Exception as exc:
             logger.debug(f"FinancialFetcher: Sina failed for {qlib_symbol}: {exc}")
-            raw = None
+            raw_sina = None
 
-        if raw is not None:
-            return self._normalize_indicators(raw, qlib_symbol)
+        sina_df = self._normalize_indicators(raw_sina, qlib_symbol) if raw_sina is not None else None
 
         # Fallback: EM interface (code.SH format)
         try:
-            raw = self._call_akshare_em(qlib_symbol)
+            raw_em = self._call_akshare_em(qlib_symbol)
         except Exception as exc:
             logger.debug(f"FinancialFetcher: EM fallback failed for {qlib_symbol}: {exc}")
-            return None
+            raw_em = None
 
-        if raw is not None:
-            return self._normalize_em_indicators(raw, qlib_symbol)
-        return None
+        em_df = self._normalize_em_indicators(raw_em, qlib_symbol) if raw_em is not None else None
+
+        if sina_df is not None:
+            return self._merge_indicator_frames(sina_df, em_df)
+
+        return em_df
+
+    @staticmethod
+    def _merge_indicator_frames(primary: pd.DataFrame, fallback: Optional[pd.DataFrame]) -> pd.DataFrame:
+        if fallback is None or fallback.empty:
+            return primary
+
+        result = primary.copy()
+        fallback = fallback.reindex(result.index)
+        for column in fallback.columns:
+            if column not in result.columns:
+                result[column] = fallback[column]
+            else:
+                result[column] = result[column].combine_first(fallback[column])
+        ordered = [c for c in _SINA_METRICS if c in result.columns]
+        return result[ordered]
 
     def _call_akshare_sina(self, qlib_symbol: str) -> Optional[pd.DataFrame]:
         import akshare as ak
         code = self.to_bare_code(qlib_symbol)
-        start_year = str(date.today().year - 3)
+        start_year = str(date.today().year - 5)
         return ak.stock_financial_analysis_indicator(symbol=code, start_year=start_year)
 
     def _call_akshare_em(self, qlib_symbol: str) -> Optional[pd.DataFrame]:
@@ -138,6 +178,16 @@ class FinancialFetcher(BaseDataFetcher):
             "TOTALOPERATEREVETZ": "revenue_growth",
             "PARENTNETPROFITTZ": "profit_growth",
             "JYXJLYYSR": "ocf_to_np",
+            "YSZKZZL": "ar_turnover",
+            "YSZKZZTS": "ar_turn_days",
+            "CHZZL": "inventory_turnover",
+            "CHZZTS": "inventory_turn_days",
+            "GDZCZZL": "fixed_asset_turnover",
+            "ZZCZZL": "asset_turnover",
+            "ZZCZZTS": "asset_turn_days",
+            "LDZCZZL": "current_asset_turnover",
+            "LDZCZZTS": "current_asset_turn_days",
+            "GDQYZZL": "equity_turnover",
         }
         date_col = next((c for c in df.columns if "日期" in str(c) or "date" in str(c).lower() or "REPORT_DATE" in str(c)), df.columns[0])
         df[date_col] = pd.to_datetime(df[date_col])

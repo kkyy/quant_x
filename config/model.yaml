@@ -161,11 +161,112 @@ model:
       #   valuation:     pe_ttm, pb, ps_ttm, dyr
       #   profitability: roe, roa, gross_margin, net_margin
       #   growth:        revenue_growth, profit_growth
-      #   cashflow:      ocf_to_np, fcf_yield
+      #   cashflow:      ocf_to_np, fcy_yield
       # 变化量: roe_chg, margin_chg, rev_accel (include_change=true)
       # - name: "fundamental"
       #   metrics: ["valuation", "profitability", "growth", "cashflow"]
       #   include_change: true
+
+      # ── 新增外部因子（取消注释以启用）────────────────────────────────
+
+      # 股权质押因子
+      # 生成的特征:
+      #   pledge_ratio        质押比例
+      #   pledge_ratio_chg    质押比例变化
+      # - name: "pledge"
+      #   include_change: true
+
+      # 融资融券因子
+      # 生成的特征:
+      #   margin_balance_chg_pct     融资余额变化率
+      #   short_sell_ratio           融券占比
+      #   margin_balance_chg_{w}d    w日融资余额变化
+      # - name: "margin"
+      #   include_change: true
+      #   windows: [5, 10, 20]
+
+      # 高管增减持因子
+      # 生成的特征:
+      #   insider_net_buy_pct_{w}d   w日高管净买入占比
+      #   insider_buy_count_{w}d     w日高管增持次数
+      #   insider_sell_count_{w}d    w日高管减持次数
+      # - name: "insider"
+      #   windows: [5, 20, 60]
+
+      # 分析师预测因子
+      # 生成的特征:
+      #   analyst_coverage       研报覆盖数
+      #   buy_rating_ratio       买入+增持占比
+      #   consensus_eps_growth   一致预期EPS增速
+      # - name: "analyst"
+
+      # 股东户数因子
+      # 生成的特征:
+      #   sh_count               股东户数
+      #   sh_count_chg_pct       户数变化率（减少=集中=看多）
+      #   sh_per_share_holding_change  户均持股变化
+      # - name: "shareholder"
+      #   include_change: true
+
+      # 分红因子
+      # 生成的特征:
+      #   div_yield_ttm          过去12个月股息率
+      #   div_consistency        连续分红年数
+      #   div_growth_rate        分红增长率
+      # - name: "dividend"
+      #   lookback_years: 5
+
+      # 估值因子（含市值绝对值、PEG、市现率）
+      # 生成的特征:
+      #   market_cap             总市值（绝对值）
+      #   float_market_cap       流通市值（绝对值）
+      #   pe_ttm, pb, ps_ttm     估值比率（日频）
+      #   peg, pcf               PEG、市现率
+      # - name: "valuation"
+      #   include_change: false
+
+      # 资产负债表因子（含营收/利润/资产绝对值）
+      # 生成的特征:
+      #   leverage_ratio         杠杆率(负债/权益)
+      #   current_ratio          流动比率
+      #   quick_ratio            速动比率
+      #   goodwill_to_equity     商誉/净资产
+      #   net_debt_ratio         净负债率
+      #   revenue                营业收入（绝对值）
+      #   net_profit             净利润（绝对值）
+      #   total_assets           总资产（绝对值）
+      #   total_equity           净资产（绝对值）
+      # - name: "balance_sheet"
+      #   include_change: false
+
+      # 业绩预告因子
+      # 生成的特征:
+      #   guidance_type          预告类型(预增=3,首亏=-3等)
+      #   earnings_surprise_pct  业绩预期变化幅度
+      # - name: "earnings_guidance"
+
+      # 机构持仓因子
+      # 生成的特征:
+      #   fund_hold_count        持有基金家数
+      #   fund_hold_count_chg    基金家数变化
+      #   qfii_hold_flag         QFII持仓标志
+      #   qfii_new_entry         QFII新进标志
+      #   ss_hold_flag           社保持仓标志
+      # - name: "institutional"
+      #   include_change: true
+
+      # 回购因子
+      # 生成的特征:
+      #   repurchase_completion_pct  回购完成度
+      #   repurchase_active          回购进行中标志
+      # - name: "repurchase"
+
+      # 机构调研因子
+      # 生成的特征:
+      #   visit_count_30d        近30天调研次数
+      #   visit_count_chg        调研次数变化
+      # - name: "visit"
+      #   lookback_days: 30
 
     # ── Legacy flags（已被 factors 列表取代，仍向下兼容）────────
     use_sector_factors: false

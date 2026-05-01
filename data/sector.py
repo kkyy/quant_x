@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from .utils import code_to_qlib_instrument as _code_to_qlib  # noqa: F401
+from .utils import normalize_qlib_instrument
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,16 @@ class SectorDataProvider:
     def _load_cache(self) -> Optional[Dict[str, str]]:
         f = self.cache_dir / "sector_map.json"
         if f.exists():
-            return json.loads(f.read_text(encoding="utf-8"))
+            raw = json.loads(f.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                return None
+            normalized = {
+                normalize_qlib_instrument(str(k)): str(v)
+                for k, v in raw.items()
+            }
+            if normalized != raw:
+                self._save_cache(normalized)
+            return normalized
         return None
 
     def _save_cache(self, m: Dict[str, str]):

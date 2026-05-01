@@ -1,0 +1,48 @@
+# Practical overlay iteration for the csi1000_balanced research line.
+#
+# Goal: preserve the balanced baseline's wider diversification while using the
+# stock-vs-sector post-filter as a moderate alpha overlay.
+#
+# Use with:
+#   python run_backtest.py --config config/csi1000_balanced_overlay_practical.yaml \
+#     --model-path models/lgbm_universe-csi1000_20260428_155547.pkl
+
+market:
+  name: "csi300"
+  benchmark: "SH000300"
+
+strategy:
+  topk_dropout:
+    topk: 15
+    n_drop: 5
+    hold_thresh: 5
+  portfolio:
+    max_position_pct: 0.1
+    concentration_hard_limit: 0.2
+  universe_filter:
+    exclude_kcb: true
+    exclude_list: []
+    min_price: 3
+    exclude_st: true
+    exclude_suspended: true
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    industry_neutralize: false
+    stock_vs_sector_filter:
+      enabled: true
+      window: 20
+      keep_top_pct: 0.5
+
+daily_rebalance:
+  market: "csi300"
+  topk: 15
+  n_drop: 5
+  hold_thresh: 5
+  account: 150000
+  notify_channel: "bark"
+  start_date: "previous_trade_date"
+  model_path: "models/lgbm_universe-csi1000_20260428_155547.pkl"

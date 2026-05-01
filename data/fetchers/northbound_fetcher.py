@@ -237,6 +237,8 @@ class NorthboundFetcher(BaseDataFetcher):
         bare = code.strip()
         if bare.startswith(("SH", "SZ", "BJ")):
             return bare
+        if bare.startswith("920"):
+            return f"BJ{bare}"
         if bare.startswith(("4", "8")):
             return f"BJ{bare}"
         exchange = "SH" if bare.startswith(("6", "9")) else "SZ"
