@@ -51,10 +51,10 @@ class RegimeStrategySwitch:
 
     # Default rules used when config does not specify a regime
     _DEFAULT_RULES: Dict[int, Dict[str, int]] = {
-        0: {"topk": 15, "n_drop": 3, "hold_thresh": 5},   # calm_bull
-        1: {"topk": 10, "n_drop": 1, "hold_thresh": 8},   # calm_bear
-        2: {"topk": 12, "n_drop": 2, "hold_thresh": 5},   # volatile_bull
-        3: {"topk": 8,  "n_drop": 1, "hold_thresh": 10},  # volatile_bear
+        0: {"topk": 15, "n_drop": 3, "hold_thresh": 5, "overlay_enabled": True},   # calm_bull
+        1: {"topk": 10, "n_drop": 1, "hold_thresh": 8, "overlay_enabled": True},   # calm_bear
+        2: {"topk": 12, "n_drop": 2, "hold_thresh": 5, "overlay_enabled": True},   # volatile_bull
+        3: {"topk": 8,  "n_drop": 1, "hold_thresh": 10, "overlay_enabled": True},  # volatile_bear
     }
 
     _REGIME_NAMES = {
@@ -114,28 +114,35 @@ class RegimeStrategySwitch:
         latest_label = int(labels_by_date.iloc[-1])
         return latest_label
 
-    def adjust(self, base_params: Dict[str, int], regime_label: int) -> Dict[str, int]:
+    def adjust(self, base_params: Dict[str, int], regime_label: int) -> Dict[str, any]:
         """Return a copy of *base_params* overridden by regime-specific rules.
 
-        Only keys present in the rule (topk, n_drop, hold_thresh) are
-        overridden; missing keys keep their base value.
+        Only keys present in the rule (topk, n_drop, hold_thresh,
+        overlay_enabled) are overridden; missing keys keep their base
+        value.  When ``overlay_enabled`` is absent from a rule it
+        defaults to True (backward compatible).
         """
         result = dict(base_params)
         override = self.rules.get(regime_label, {})
         if override:
             result.update(override)
-            name = self._REGIME_NAMES.get(regime_label, f"unknown({regime_label})")
-            logger.info(
-                "RegimeSwitch: detected %s → params %s",
-                name,
-                {k: result[k] for k in ("topk", "n_drop", "hold_thresh") if k in result},
-            )
+        # Default overlay_enabled to True when not specified
+        result.setdefault("overlay_enabled", True)
+        name = self._REGIME_NAMES.get(regime_label, f"unknown({regime_label})")
+        logger.info(
+            "RegimeSwitch: detected %s → params %s, overlay_enabled=%s",
+            name,
+            {k: result[k] for k in ("topk", "n_drop", "hold_thresh") if k in result},
+            result["overlay_enabled"],
+        )
         return result
 
     def adjust_cfg(self, cfg: Dict[str, any], regime_label: int) -> Dict[str, any]:
         """Convenience: adjust a daily-rebalance cfg dict in-place.
 
-        *cfg* is expected to contain ``topk``, ``n_drop``, ``hold_thresh`` keys.
+        *cfg* is expected to contain ``topk``, ``n_drop``, ``hold_thresh``
+        keys.  The ``overlay_enabled`` key is also added to *cfg* when
+        present in the regime rule.
         """
         base = {
             "topk": cfg.get("topk", 15),
@@ -145,3 +152,32 @@ class RegimeStrategySwitch:
         adjusted = self.adjust(base, regime_label)
         cfg.update(adjusted)
         return cfg
+
+
+def apply_overlay_gating(config: dict, overlay_enabled: bool) -> dict:
+    """Gate the stock_vs_sector_filter based on regime overlay_enabled flag.
+
+    When *overlay_enabled* is False, disables the stock_vs_sector_filter
+    in the config so that ``postprocess_signal`` skips it.  When True
+    (or when the key is absent) the config is returned unchanged.
+
+    This mutates *config* in-place and also returns it for convenience.
+
+    Usage::
+
+        adjusted = regime_switch.adjust(base_params, regime_label)
+        config = apply_overlay_gating(config, adjusted.get("overlay_enabled", True))
+    """
+    if overlay_enabled:
+        return config
+
+    svs_cfg = (
+        config
+        .setdefault("signal", {})
+        .setdefault("postprocess", {})
+        .setdefault("stock_vs_sector_filter", {})
+    )
+    if svs_cfg.get("enabled", False):
+        svs_cfg["enabled"] = False
+        logger.info("RegimeSwitch: overlay_enabled=false → stock_vs_sector_filter disabled")
+    return config

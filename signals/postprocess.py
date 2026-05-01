@@ -95,20 +95,47 @@ def apply_stock_vs_sector_filter(
     config: dict,
     sector_map: Optional[Dict[str, str]],
     price_data: Optional[pd.DataFrame],
+    mode: Optional[str] = None,
+    weight_strength: Optional[float] = None,
 ) -> pd.Series:
-    """Keep only stocks with strong recent performance versus their sector.
+    """Apply stock-vs-sector relative strength overlay to predictions.
 
-    Config shape:
+    Three modes are supported:
 
-    signal:
-      postprocess:
-        stock_vs_sector_filter:
-          enabled: true
-          window: 20
-          keep_top_pct: 0.4
+    * ``hard_filter`` (default) — drop all stocks below the ``keep_top_pct``
+      threshold, keeping only the top fraction by SVS rank.
+    * ``multiplicative_weight`` — blend model score with SVS rank as a
+      multiplicative weight:
+      ``score = pred * (1 - w + w * svs_rank)``, then re-rank to [0,1].
+    * ``residual_add`` — add a weighted SVS rank to the model score:
+      ``score = pred + w * svs_rank``, then re-rank to [0,1].
 
-    ``keep_top_pct=0.4`` means keep the top 40% by daily
-    ``stock_vs_sector_{window}d`` percentile rank.
+    Config shape::
+
+        signal:
+          postprocess:
+            stock_vs_sector_filter:
+              enabled: true
+              window: 20
+              keep_top_pct: 0.4
+              mode: "hard_filter"            # or "multiplicative_weight" / "residual_add"
+              weight_strength: 0.5           # blend strength for soft modes
+
+    Parameters
+    ----------
+    pred : pd.Series
+        Prediction series with (instrument, datetime) MultiIndex.
+    config : dict
+        Strategy config dict (contains ``signal.postprocess.stock_vs_sector_filter``).
+    sector_map : dict or None
+        {instrument: sector_name} mapping.
+    price_data : pd.DataFrame or None
+        Price data for computing SVS factors.
+    mode : str or None
+        Override filter mode.  If None, reads from config (default: ``"hard_filter"``).
+    weight_strength : float or None
+        Override blend strength for soft modes.  If None, reads from config
+        (default: ``0.5``).
     """
     cfg = (
         config.get("signal", {})
@@ -135,6 +162,20 @@ def apply_stock_vs_sector_filter(
             keep_top_pct,
         )
         return pred
+
+    # Resolve mode and weight_strength: explicit params override config
+    effective_mode = mode if mode is not None else cfg.get("mode", "hard_filter")
+    effective_weight = (
+        weight_strength if weight_strength is not None
+        else float(cfg.get("weight_strength", 0.5))
+    )
+
+    if effective_mode not in ("hard_filter", "multiplicative_weight", "residual_add"):
+        logger.warning(
+            "stock_vs_sector_filter mode=%s is unknown; falling back to hard_filter",
+            effective_mode,
+        )
+        effective_mode = "hard_filter"
 
     try:
         from quant_ex.features.sector_factors import SectorFactorEngine
@@ -171,27 +212,63 @@ def apply_stock_vs_sector_filter(
         ):
             factor_rank = factor_rank.reorder_levels(pred.index.names)
 
-        threshold = 1.0 - keep_top_pct
-        keep = factor_rank.reindex(pred.index) >= threshold
-        filtered = pred[keep.fillna(False)]
-        if filtered.empty:
-            logger.warning(
-                "stock_vs_sector_filter removed all signal rows "
-                "(window=%s, keep_top_pct=%s); returning unfiltered signal",
+        # ── Hard filter mode (original behaviour) ─────────────────────────────
+        if effective_mode == "hard_filter":
+            threshold = 1.0 - keep_top_pct
+            keep = factor_rank.reindex(pred.index) >= threshold
+            filtered = pred[keep.fillna(False)]
+            if filtered.empty:
+                logger.warning(
+                    "stock_vs_sector_filter removed all signal rows "
+                    "(window=%s, keep_top_pct=%s); returning unfiltered signal",
+                    window,
+                    keep_top_pct,
+                )
+                return pred
+
+            logger.info(
+                "stock_vs_sector_filter kept %d/%d signal rows "
+                "(window=%s, keep_top_pct=%.2f, mode=hard_filter)",
+                len(filtered),
+                len(pred),
                 window,
                 keep_top_pct,
             )
-            return pred
+            return filtered
 
-        logger.info(
-            "stock_vs_sector_filter kept %d/%d signal rows "
-            "(window=%s, keep_top_pct=%.2f)",
-            len(filtered),
-            len(pred),
-            window,
-            keep_top_pct,
-        )
-        return filtered
+        # ── Soft weighting modes ──────────────────────────────────────────────
+        svs_rank_aligned = factor_rank.reindex(pred.index)
+
+        if effective_mode == "multiplicative_weight":
+            # score_weighted = pred * (1 - weight_strength + weight_strength * svs_rank)
+            blended = pred * (1.0 - effective_weight + effective_weight * svs_rank_aligned)
+            result = daily_rank(blended, pct=True)
+            logger.info(
+                "stock_vs_sector_filter applied multiplicative_weight "
+                "(window=%s, weight_strength=%.2f)",
+                window,
+                effective_weight,
+            )
+            return result
+
+        if effective_mode == "residual_add":
+            # score_blended = pred + weight_strength * svs_rank
+            blended = pred + effective_weight * svs_rank_aligned
+            result = daily_rank(blended, pct=True)
+            logger.info(
+                "stock_vs_sector_filter applied residual_add "
+                "(window=%s, weight_strength=%.2f)",
+                window,
+                effective_weight,
+            )
+            return result
+
+        # Should not reach here, but fallback to hard_filter for safety
+        threshold = 1.0 - keep_top_pct
+        keep = factor_rank.reindex(pred.index) >= threshold
+        filtered = pred[keep.fillna(False)]
+        return filtered if not filtered.empty else pred
+
     except Exception as exc:
         logger.warning("stock_vs_sector_filter failed: %s; skipped", exc)
         return pred

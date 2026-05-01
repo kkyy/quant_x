@@ -1,0 +1,60 @@
+# Regime-gated overlay: overlay active only in calm regimes
+#
+# Use with the csi1000-trained baseline model, for example:
+#   python run_backtest.py --config config/csi1000_regime_overlay.yaml \
+#     --model-path models/lgbm_universe-csi1000_20260428_155547.pkl
+#
+# In calm_bull / calm_bear regimes the stock_vs_sector_filter is active.
+# In volatile_bull / volatile_bear regimes the overlay is bypassed,
+# falling back to baseline ranking without the relative-strength filter.
+
+market:
+  name: "csi1000"
+  benchmark: "SH000852"
+
+strategy:
+  topk_dropout:
+    topk: 10
+    n_drop: 5
+    hold_thresh: 8
+  portfolio:
+    max_position_pct: 0.12
+    concentration_hard_limit: 0.22
+  universe_filter:
+    exclude_kcb: true
+    min_price: 3
+    exclude_st: true
+    exclude_suspended: true
+  regime_switch:
+    enabled: true
+    rules:
+      0:  # calm_bull
+        topk: 10
+        n_drop: 5
+        hold_thresh: 8
+        overlay_enabled: true
+      1:  # calm_bear
+        topk: 10
+        n_drop: 3
+        hold_thresh: 8
+        overlay_enabled: true
+      2:  # volatile_bull
+        topk: 15
+        n_drop: 3
+        hold_thresh: 5
+        overlay_enabled: false
+      3:  # volatile_bear
+        topk: 12
+        n_drop: 1
+        hold_thresh: 10
+        overlay_enabled: false
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    stock_vs_sector_filter:
+      enabled: true
+      window: 20
+      keep_top_pct: 0.5

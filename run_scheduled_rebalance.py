@@ -23,6 +23,7 @@ from quant_ex.data.sector import SectorDataProvider
 from quant_ex.data.universe import UniverseFilter
 from quant_ex.notify.pusher import NotificationPusher
 from quant_ex.signals.postprocess import postprocess_requires_price_data, postprocess_signal
+from quant_ex.strategy.regime_switch import apply_overlay_gating
 from quant_ex.utils.config import load_config
 from quant_ex.utils.logger import setup_logger
 from quant_ex.utils.qlib_utils import load_recorder_model
@@ -843,6 +844,8 @@ def main() -> None:
             regime_label = regime_switch.detect_regime(price_data)
             cfg = regime_switch.adjust_cfg(cfg, regime_label)
             config = _apply_strategy_config(raw_config, cfg)
+            # Gate overlay (stock_vs_sector_filter) by regime
+            apply_overlay_gating(config, cfg.get("overlay_enabled", True))
     except Exception as exc:
         logger.warning("Regime switch integration skipped: %s", exc)
 

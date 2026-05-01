@@ -1,0 +1,17 @@
+# Factor ablation: Alpha158 + fundamental (financial metrics from cache/financial/)
+# Usage: python run_train.py --config config/ablation_fundamental.yaml --model lgbm --tag ablation_fundamental
+
+model:
+  features:
+    factors:
+      - name: "technical"
+        ma_pairs: [[5, 20], [10, 60]]
+        rsi_windows: [14, 20]
+        bb_windows: [20]
+        atr_windows: [14]
+        obv_windows: [10, 20]
+        vwap_windows: [5, 10, 20]
+
+      - name: "fundamental"
+        metrics: ["valuation", "profitability", "growth", "cashflow"]
+        include_change: true

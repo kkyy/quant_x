@@ -39,10 +39,19 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     return config
 
 
-def _deep_merge(base: dict, override: dict) -> dict:
+def deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge *override* into *base* (mutates *base*).
+
+    Dict values are merged recursively; all other types are replaced.
+    Returns *base* for convenience.
+    """
     for k, v in override.items():
         if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-            _deep_merge(base[k], v)
+            deep_merge(base[k], v)
         else:
             base[k] = v
     return base
+
+
+# Backward-compatible alias used internally by this module.
+_deep_merge = deep_merge

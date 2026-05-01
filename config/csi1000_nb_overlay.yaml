@@ -1,0 +1,46 @@
+# Combined Alpha158 + Northbound training config for overlay strategy
+# Train: python run_train.py --config config/csi1000_nb_overlay.yaml --model lgbm --tag csi1000_nb_overlay
+
+market:
+  name: "csi1000"
+  benchmark: "SH000852"
+
+model:
+  features:
+    factors:
+      - name: "technical"
+        ma_pairs: [[5, 20], [10, 60]]
+        rsi_windows: [14, 20]
+        bb_windows: [20]
+        atr_windows: [14]
+        obv_windows: [10, 20]
+        vwap_windows: [5, 10, 20]
+      - name: "northbound"
+        windows: [5, 10, 20, 60]
+        include_raw: true
+        include_change: true
+        use_individual_cache: true
+
+strategy:
+  topk_dropout:
+    topk: 5
+    n_drop: 5
+    hold_thresh: 5
+  portfolio:
+    max_position_pct: 0.2
+    concentration_hard_limit: 0.3
+  universe_filter:
+    exclude_kcb: true
+    min_price: 3
+    exclude_st: true
+    exclude_suspended: true
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    stock_vs_sector_filter:
+      enabled: true
+      window: 20
+      keep_top_pct: 0.4

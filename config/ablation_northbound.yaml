@@ -1,0 +1,18 @@
+# Factor ablation: Alpha158 + northbound (北向资金 from cache/northbound/)
+# Usage: python run_train.py --config config/ablation_northbound.yaml --model lgbm --tag ablation_northbound
+
+model:
+  features:
+    factors:
+      - name: "technical"
+        ma_pairs: [[5, 20], [10, 60]]
+        rsi_windows: [14, 20]
+        bb_windows: [20]
+        atr_windows: [14]
+        obv_windows: [10, 20]
+        vwap_windows: [5, 10, 20]
+
+      - name: "northbound"
+        windows: [5, 10, 20, 60]
+        include_raw: true
+        include_change: true

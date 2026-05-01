@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as _cf
 import json
+import logging
 import subprocess
 import sys
 import threading
@@ -20,6 +21,10 @@ from typing import Iterable, List, Optional
 
 import pandas as pd
 import yaml
+
+from utils.config import deep_merge
+
+logger = logging.getLogger(__name__)
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -56,6 +61,31 @@ def parse_int_csv(value: str) -> list[int]:
     return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 
+def _copy_dict(d: dict) -> dict:
+    """Recursively shallow-copy a dict so mutations don't touch the original."""
+    out = {}
+    for k, v in d.items():
+        out[k] = _copy_dict(v) if isinstance(v, dict) else v
+    return out
+
+
+def newest_model_for_tag(tag: str, before_ts: float) -> Path:
+    """Find the newest .pkl model for *tag* created before *before_ts*.
+
+    Model files follow the pattern: ``lgbm_{tag}_{YYYYMMDD_HHMMSS}.pkl``.
+    """
+    models_dir = REPO_ROOT / "models"
+    candidates = sorted(models_dir.glob(f"lgbm_{tag}_*.pkl"))
+    if not candidates:
+        raise FileNotFoundError(f"No model found for tag '{tag}' in {models_dir}")
+    # Filter to models created before the training started (avoid picking up stale ones)
+    valid = [p for p in candidates if p.stat().st_mtime <= before_ts + 5]
+    if not valid:
+        # Fallback: just return the newest one regardless
+        valid = candidates
+    return valid[-1]
+
+
 def run_command(command: list[str], log_path: Path) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as log_file:
@@ -70,8 +100,24 @@ def run_command(command: list[str], log_path: Path) -> None:
         )
 
 
-def write_fold_config(path: Path, fold: Fold, train_universe: str) -> None:
-    config = {
+def write_fold_config(
+    path: Path,
+    fold: Fold,
+    train_universe: str,
+    train_config: Optional[dict] = None,
+) -> None:
+    """Write a fold-specific training config YAML.
+
+    If *train_config* is provided it is deep-merged first, then the
+    fold-specific keys (market, dates) are merged on top so they always win.
+    """
+    # Start with the user-supplied train-config (if any) as the base.
+    config: dict = {}
+    if train_config:
+        config = _copy_dict(train_config)
+
+    # Fold-specific keys always take precedence over the train-config.
+    fold_overrides = {
         "market": {
             "name": train_universe,
         },
@@ -83,6 +129,8 @@ def write_fold_config(path: Path, fold: Fold, train_universe: str) -> None:
             "test_start": fold.test_start,
         },
     }
+    deep_merge(config, fold_overrides)
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
@@ -115,15 +163,6 @@ def load_folds(folds_config: Optional[str]) -> list:
 
 
 
-    candidates = [
-        path for path in (REPO_ROOT / "models").glob(f"lgbm_{tag}_*.pkl")
-        if path.stat().st_mtime >= after
-    ]
-    if not candidates:
-        candidates = list((REPO_ROOT / "models").glob(f"lgbm_{tag}_*.pkl"))
-    if not candidates:
-        raise FileNotFoundError(f"No trained model found for tag={tag}")
-    return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
 def summarize(
@@ -316,7 +355,10 @@ def _run_one_fold_universe(
 
     tag = f"wf_{train_universe}_{fold.name}_{run_id}"
     cfg_path = configs_dir / f"{tag}.yaml"
-    write_fold_config(cfg_path, fold, train_universe)
+    train_config = getattr(args, "_train_config_dict", None)
+    write_fold_config(cfg_path, fold, train_universe, train_config=train_config)
+    if train_config:
+        print(f"    (train-config: {args.train_config} merged into {cfg_path.name})", flush=True)
 
     print(f"\n=== Train {tag} ===", flush=True)
     before_train = datetime.now().timestamp()
@@ -525,6 +567,15 @@ def main(argv: Iterable[str] | None = None) -> None:
              "Defaults to the built-in 7-fold schedule (2020-2026). "
              "See config/walk_forward_folds.yaml.example for the format.",
     )
+    parser.add_argument(
+        "--train-config",
+        type=str,
+        default=None,
+        help="Path to a YAML config file whose contents are deep-merged into each "
+             "fold's generated training config. Useful for injecting factor definitions "
+             "(e.g. config/ablation_northbound.yaml). Fold-specific keys (market, dates) "
+             "always take precedence over this file.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     # Validate early so typos fail before the first long train.
@@ -532,6 +583,17 @@ def main(argv: Iterable[str] | None = None) -> None:
     parse_int_csv(args.topk)
     parse_int_csv(args.n_drop)
     parse_int_csv(args.hold_thresh)
+
+    # Load --train-config once so every fold shares the same parsed dict.
+    if args.train_config:
+        tc_path = Path(args.train_config)
+        if not tc_path.exists():
+            parser.error(f"--train-config file not found: {tc_path}")
+        with tc_path.open(encoding="utf-8") as fh:
+            args._train_config_dict = yaml.safe_load(fh) or {}
+        logger.info("--train-config loaded from %s (keys: %s)", tc_path, list(args._train_config_dict.keys()))
+    else:
+        args._train_config_dict = None
 
     run_validation(args)
 

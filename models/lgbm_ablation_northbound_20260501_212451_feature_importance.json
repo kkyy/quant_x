@@ -1,0 +1,207 @@
+{
+  "model": "lgbm",
+  "tag": "ablation_northbound",
+  "ts": "20260501_212451",
+  "importance": [
+    {
+      "feature": "CNTP60",
+      "importance": 619.4949951171875
+    },
+    {
+      "feature": "LOW0",
+      "importance": 372.9300079345703
+    },
+    {
+      "feature": "QTLU60",
+      "importance": 187.03199768066406
+    },
+    {
+      "feature": "VWAP0",
+      "importance": 165.03480529785156
+    },
+    {
+      "feature": "VMA60",
+      "importance": 163.31770706176758
+    },
+    {
+      "feature": "MIN60",
+      "importance": 121.44639778137207
+    },
+    {
+      "feature": "RSQR5",
+      "importance": 102.160400390625
+    },
+    {
+      "feature": "CORD5",
+      "importance": 101.75610160827637
+    },
+    {
+      "feature": "STD5",
+      "importance": 92.21369934082031
+    },
+    {
+      "feature": "MIN10",
+      "importance": 81.33219909667969
+    },
+    {
+      "feature": "KUP",
+      "importance": 79.55900001525879
+    },
+    {
+      "feature": "KSFT",
+      "importance": 79.0979995727539
+    },
+    {
+      "feature": "ROC30",
+      "importance": 75.47889709472656
+    },
+    {
+      "feature": "obv_mom_10d",
+      "importance": 70.32389831542969
+    },
+    {
+      "feature": "VSUMN60",
+      "importance": 69.59470176696777
+    },
+    {
+      "feature": "VMA30",
+      "importance": 66.01460266113281
+    },
+    {
+      "feature": "SUMN30",
+      "importance": 62.096900939941406
+    },
+    {
+      "feature": "CORR20",
+      "importance": 61.359500885009766
+    },
+    {
+      "feature": "KMID",
+      "importance": 53.5620002746582
+    },
+    {
+      "feature": "RESI30",
+      "importance": 53.33889961242676
+    },
+    {
+      "feature": "RESI5",
+      "importance": 52.80509948730469
+    },
+    {
+      "feature": "SUMD5",
+      "importance": 50.019798278808594
+    },
+    {
+      "feature": "CORR5",
+      "importance": 47.864898681640625
+    },
+    {
+      "feature": "VSTD60",
+      "importance": 42.624399185180664
+    },
+    {
+      "feature": "WVMA20",
+      "importance": 40.82830047607422
+    },
+    {
+      "feature": "rsi_14d",
+      "importance": 40.45119857788086
+    },
+    {
+      "feature": "OPEN0",
+      "importance": 40.38999938964844
+    },
+    {
+      "feature": "ROC5",
+      "importance": 40.04570007324219
+    },
+    {
+      "feature": "RESI20",
+      "importance": 39.56890106201172
+    },
+    {
+      "feature": "QTLU5",
+      "importance": 37.21870040893555
+    },
+    {
+      "feature": "QTLD5",
+      "importance": 36.213199615478516
+    },
+    {
+      "feature": "MIN5",
+      "importance": 36.15700149536133
+    },
+    {
+      "feature": "STD60",
+      "importance": 35.31480026245117
+    },
+    {
+      "feature": "ROC20",
+      "importance": 33.76380157470703
+    },
+    {
+      "feature": "IMIN20",
+      "importance": 32.223899841308594
+    },
+    {
+      "feature": "SUMD10",
+      "importance": 32.19559860229492
+    },
+    {
+      "feature": "CORD20",
+      "importance": 31.626100540161133
+    },
+    {
+      "feature": "VMA10",
+      "importance": 29.96030044555664
+    },
+    {
+      "feature": "BETA30",
+      "importance": 27.679399490356445
+    },
+    {
+      "feature": "STD30",
+      "importance": 27.5492000579834
+    },
+    {
+      "feature": "QTLD20",
+      "importance": 25.62179946899414
+    },
+    {
+      "feature": "VSTD20",
+      "importance": 23.53660011291504
+    },
+    {
+      "feature": "HIGH0",
+      "importance": 22.82509994506836
+    },
+    {
+      "feature": "BETA60",
+      "importance": 20.372800827026367
+    },
+    {
+      "feature": "RSV30",
+      "importance": 19.85919952392578
+    },
+    {
+      "feature": "RSQR60",
+      "importance": 19.812599182128906
+    },
+    {
+      "feature": "CNTN30",
+      "importance": 19.62649917602539
+    },
+    {
+      "feature": "WVMA30",
+      "importance": 0.0
+    },
+    {
+      "feature": "KLOW2",
+      "importance": 0.0
+    },
+    {
+      "feature": "CNTD60",
+      "importance": 0.0
+    }
+  ]
+}

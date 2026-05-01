@@ -1,0 +1,30 @@
+# Overlay with multiplicative momentum weight instead of hard filter
+market:
+  name: "csi1000"
+  benchmark: "SH000852"
+
+strategy:
+  topk_dropout:
+    topk: 10
+    n_drop: 5
+    hold_thresh: 8
+  portfolio:
+    max_position_pct: 0.12
+    concentration_hard_limit: 0.22
+  universe_filter:
+    exclude_kcb: true
+    min_price: 3
+    exclude_st: true
+    exclude_suspended: true
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    stock_vs_sector_filter:
+      enabled: true
+      window: 20
+      keep_top_pct: 0.5
+      mode: "multiplicative_weight"
+      weight_strength: 0.5

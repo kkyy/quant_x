@@ -55,8 +55,9 @@ model:
   # ── Multi-seed ensemble ─────────────────────────────────────
   # 多 seed bagging 可以降低单次训练的随机性，但训练耗时会按 seed 数近似放大。
   ensemble:
-    enabled: false
+    enabled: true
     seeds: [42, 123, 2024]
+    bagging_fraction: 0.8
 
   # ── XGBoost hyper-parameters ─────────────────────────────────
   xgboost:
@@ -147,14 +148,18 @@ model:
       #   nb_hold_pct             北向持股占流通股比
       #   nb_hold_mv              北向持股市值
       #   nb_net_buy_ratio        北向净买入占比
+      #   nb_hold_chg             北向持股增减 (绝对股数, 仅 individual cache)
       #   nb_hold_pct_chg_{w}d    持股占比 w 日变化量
       #   nb_net_buy_ma_{w}d      w 日净买入均值
+      #   nb_hold_chg_ma_{w}d     w 日持股增减均值 (仅 individual cache)
+      #   nb_hold_chg_zscore_{w}d w 日持股增减 z-score (仅 individual cache)
       #   nb_sector_hold_pct      行业北向持股占比均值
       #   nb_vs_sector_{w}d       个股 vs 行业北向持股变化
       # - name: "northbound"
       #   windows: [5, 10, 20, 60]
       #   include_raw: true
       #   include_change: true
+      #   use_individual_cache: true   # 优先读 individual CSV (数据更丰富)
 
       # 基本面因子 — 取消注释以启用扩展指标
       # metrics 支持分组名和单独列名:
@@ -222,8 +227,8 @@ model:
       #   float_market_cap       流通市值（绝对值）
       #   pe_ttm, pb, ps_ttm     估值比率（日频）
       #   peg, pcf               PEG、市现率
-      # - name: "valuation"
-      #   include_change: false
+      - name: "valuation"
+        include_change: false
 
       # 资产负债表因子（含营收/利润/资产绝对值）
       # 生成的特征:

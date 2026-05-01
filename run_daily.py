@@ -195,14 +195,18 @@ def main(
 
     # ── Regime-aware parameter switching (optional) ────────────────────────────
     try:
-        from quant_ex.strategy.regime_switch import RegimeStrategySwitch
+        from quant_ex.strategy.regime_switch import RegimeStrategySwitch, apply_overlay_gating
 
         regime_switch = RegimeStrategySwitch.from_config(config)
         if regime_switch is not None and price_data is not None:
             regime_label = regime_switch.detect_regime(price_data)
             base_params = config.get("strategy", {}).get("topk_dropout", {})
             adjusted = regime_switch.adjust(base_params, regime_label)
-            config.setdefault("strategy", {}).setdefault("topk_dropout", {}).update(adjusted)
+            config.setdefault("strategy", {}).setdefault("topk_dropout", {}).update(
+                {k: adjusted[k] for k in ("topk", "n_drop", "hold_thresh") if k in adjusted}
+            )
+            # Gate overlay (stock_vs_sector_filter) by regime
+            apply_overlay_gating(config, adjusted.get("overlay_enabled", True))
     except Exception as exc:
         logger.warning("Regime switch integration skipped: %s", exc)
 

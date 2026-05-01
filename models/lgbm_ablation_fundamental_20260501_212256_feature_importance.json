@@ -1,0 +1,207 @@
+{
+  "model": "lgbm",
+  "tag": "ablation_fundamental",
+  "ts": "20260501_212256",
+  "importance": [
+    {
+      "feature": "CNTP60",
+      "importance": 2207.4687786102295
+    },
+    {
+      "feature": "KLEN",
+      "importance": 992.0115051269531
+    },
+    {
+      "feature": "QTLU60",
+      "importance": 679.9600830078125
+    },
+    {
+      "feature": "VMA60",
+      "importance": 491.9091033935547
+    },
+    {
+      "feature": "VWAP0",
+      "importance": 452.9617042541504
+    },
+    {
+      "feature": "MIN60",
+      "importance": 410.2107963562012
+    },
+    {
+      "feature": "VSUMP60",
+      "importance": 318.7349052429199
+    },
+    {
+      "feature": "ROC30",
+      "importance": 279.84509086608887
+    },
+    {
+      "feature": "STD5",
+      "importance": 266.812198638916
+    },
+    {
+      "feature": "MIN10",
+      "importance": 252.3778018951416
+    },
+    {
+      "feature": "RSQR5",
+      "importance": 243.593599319458
+    },
+    {
+      "feature": "CORD20",
+      "importance": 242.7578010559082
+    },
+    {
+      "feature": "LOW0",
+      "importance": 237.91759872436523
+    },
+    {
+      "feature": "RESI5",
+      "importance": 208.94609832763672
+    },
+    {
+      "feature": "BETA60",
+      "importance": 203.02489471435547
+    },
+    {
+      "feature": "STD60",
+      "importance": 201.46640014648438
+    },
+    {
+      "feature": "HIGH0",
+      "importance": 183.47500610351562
+    },
+    {
+      "feature": "CORR10",
+      "importance": 180.78300094604492
+    },
+    {
+      "feature": "MAX60",
+      "importance": 179.96970176696777
+    },
+    {
+      "feature": "VSTD60",
+      "importance": 175.1946964263916
+    },
+    {
+      "feature": "RESI30",
+      "importance": 173.16790008544922
+    },
+    {
+      "feature": "CORD5",
+      "importance": 166.41230010986328
+    },
+    {
+      "feature": "BETA5",
+      "importance": 156.1090965270996
+    },
+    {
+      "feature": "VMA20",
+      "importance": 150.77849960327148
+    },
+    {
+      "feature": "SUMD30",
+      "importance": 145.68829917907715
+    },
+    {
+      "feature": "KMID",
+      "importance": 144.74810028076172
+    },
+    {
+      "feature": "VSTD20",
+      "importance": 144.67209815979004
+    },
+    {
+      "feature": "KSFT",
+      "importance": 136.82520294189453
+    },
+    {
+      "feature": "OPEN0",
+      "importance": 136.09639930725098
+    },
+    {
+      "feature": "KLOW",
+      "importance": 132.66859817504883
+    },
+    {
+      "feature": "vwap_dev_10d",
+      "importance": 125.98670196533203
+    },
+    {
+      "feature": "rsi_14d",
+      "importance": 120.83599662780762
+    },
+    {
+      "feature": "CORR5",
+      "importance": 110.68530082702637
+    },
+    {
+      "feature": "WVMA30",
+      "importance": 108.45480155944824
+    },
+    {
+      "feature": "RESI60",
+      "importance": 100.55239868164062
+    },
+    {
+      "feature": "VMA30",
+      "importance": 98.90650177001953
+    },
+    {
+      "feature": "WVMA5",
+      "importance": 97.13419914245605
+    },
+    {
+      "feature": "VSUMN30",
+      "importance": 95.4788990020752
+    },
+    {
+      "feature": "ROC5",
+      "importance": 89.29570007324219
+    },
+    {
+      "feature": "WVMA20",
+      "importance": 82.26080322265625
+    },
+    {
+      "feature": "SUMN30",
+      "importance": 77.84600067138672
+    },
+    {
+      "feature": "KMID2",
+      "importance": 73.65740013122559
+    },
+    {
+      "feature": "obv_mom_10d",
+      "importance": 70.32389831542969
+    },
+    {
+      "feature": "SUMN20",
+      "importance": 67.31669807434082
+    },
+    {
+      "feature": "IMAX5",
+      "importance": 65.82489967346191
+    },
+    {
+      "feature": "VSUMD60",
+      "importance": 63.86740016937256
+    },
+    {
+      "feature": "ROC20",
+      "importance": 63.70200157165527
+    },
+    {
+      "feature": "MA60",
+      "importance": 62.9911003112793
+    },
+    {
+      "feature": "SUMD10",
+      "importance": 61.06599807739258
+    },
+    {
+      "feature": "MA30",
+      "importance": 60.31060028076172
+    }
+  ]
+}

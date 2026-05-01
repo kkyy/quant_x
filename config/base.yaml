@@ -55,6 +55,9 @@ strategy:
     exclude_kcb: true
     exclude_list: []
     min_price: 3
+  portfolio:
+    max_position_pct: 0.15      # single-stock weight cap (WARNING logged when exceeded)
+    concentration_hard_limit: 0.25  # absolute hard cap (ERROR logged when exceeded)
 
 backtest:
   account: 1000000

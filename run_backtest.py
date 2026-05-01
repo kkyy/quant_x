@@ -45,6 +45,7 @@ from quant_ex.backtest.grid_search import GridSearchBacktest
 from quant_ex.backtest.metrics import format_metrics
 from quant_ex.backtest.signal_diagnostics import compute_signal_ic
 from quant_ex.signals.postprocess import postprocess_requires_price_data, postprocess_signal
+from quant_ex.strategy.regime_switch import apply_overlay_gating
 
 logger = setup_logger("run_backtest")
 
@@ -128,6 +129,29 @@ def main(
             eval_markets[0],
         )
         eval_markets = eval_markets[:1]
+
+    # ── Regime-aware parameter switching (optional) ────────────────────────────
+    try:
+        from quant_ex.strategy.regime_switch import RegimeStrategySwitch
+
+        regime_switch = RegimeStrategySwitch.from_config(config)
+        if regime_switch is not None:
+            regime_market = base_market
+            regime_price = data_loader.load_price_data(
+                instruments=regime_market,
+                start_time=tcfg.get("test_start", "2024-01-01"),
+                end_time=end or today,
+            )
+            regime_label = regime_switch.detect_regime(regime_price)
+            base_params = config.get("strategy", {}).get("topk_dropout", {})
+            adjusted = regime_switch.adjust(base_params, regime_label)
+            config.setdefault("strategy", {}).setdefault("topk_dropout", {}).update(
+                {k: adjusted[k] for k in ("topk", "n_drop", "hold_thresh") if k in adjusted}
+            )
+            # Gate overlay (stock_vs_sector_filter) by regime
+            apply_overlay_gating(config, adjusted.get("overlay_enabled", True))
+    except Exception as exc:
+        logger.warning("Regime switch integration skipped: %s", exc)
 
     # ── 构建参数网格 ──────────────────────────────────────────────────────────
     param_grid = {

@@ -33,7 +33,6 @@ def main(min_ic: float = 0.02, min_icir: float = 0.3, top_n: int = 20):
     data_loader = DataLoader(config)
     tcfg = config.get("training", {})
 
-    # 构建数据集以获取 label
     dataset = data_loader.build_dataset(
         segments={
             "train": (tcfg.get("fit_start", "2015-01-01"), tcfg.get("fit_end", "2021-12-31")),
@@ -43,11 +42,11 @@ def main(min_ic: float = 0.02, min_icir: float = 0.3, top_n: int = 20):
         instruments=config.get("market", {}).get("name", "csi300"),
     )
 
-    X_tr, y_tr = dataset.prepare("train", col_set=["feature", "label"], data_key="learn")
-    label = y_tr.squeeze()
+    df = dataset.prepare("train", col_set=["feature", "label"], data_key="learn")
+    label = df.xs("label", axis=1, level=0).squeeze()
+    X_tr = df.xs("feature", axis=1, level=0)
 
-    # 用 X_tr 作为价格数据的代理（FactorMiner 只用它的 index 范围）
-    price_data = X_tr  # index 包含 instrument + datetime，即可
+    price_data = X_tr
 
     miner = FactorMiner(
         price_data=price_data,
