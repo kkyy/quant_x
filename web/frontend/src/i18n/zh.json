@@ -154,6 +154,7 @@
     "notifTitle": "标题",
     "notifContent": "内容",
     "notifPlaceholder": "这是来自仪表板的测试通知",
+    "notifTitlePlaceholder": "测试通知",
     "sendTest": "发送测试",
     "notifNote": "发送测试通知以验证通知渠道"
   },

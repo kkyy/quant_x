@@ -154,6 +154,7 @@
     "notifTitle": "Title",
     "notifContent": "Content",
     "notifPlaceholder": "This is a test notification from the dashboard.",
+    "notifTitlePlaceholder": "Test Notification",
     "sendTest": "Send Test",
     "notifNote": "Send a test notification to verify notification channels."
   },

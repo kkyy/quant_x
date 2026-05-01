@@ -149,7 +149,7 @@ function HistoryTab() {
           <div className="lg:col-span-1">
             <table className="w-full text-sm">
               <thead><tr className="text-zinc-400 border-b border-zinc-200">
-                <th className="text-left py-2 text-xs uppercase tracking-wide">File</th>
+                <th className="text-left py-2 text-xs uppercase tracking-wide">{t('common.filename')}</th>
                 <th className="text-right py-2 text-xs uppercase tracking-wide">{t('common.sizeKb')}</th>
               </tr></thead>
               <tbody>
@@ -228,7 +228,7 @@ function NotificationTab() {
       <p className="text-zinc-500 text-sm">{t('signals.notifNote')}</p>
       <div>
         <label className="block text-sm font-medium text-zinc-700 mb-1">{t('signals.notifTitle')}</label>
-        <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls} placeholder="Test Notification" />
+        <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls} placeholder={t('signals.notifTitlePlaceholder')} />
       </div>
       <div>
         <label className="block text-sm font-medium text-zinc-700 mb-1">{t('signals.notifContent')}</label>

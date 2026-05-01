@@ -190,7 +190,7 @@ function FetchTab() {
         const task = tasks.find((tk) => tk.task_id === tid);
         if (!task) return;
         if (task.status === "done") { setStatus(t('data.fetchDone')); clearInterval(interval); }
-        else if (task.status === "failed") { setError(task.error || "Fetch failed"); setStatus(null); clearInterval(interval); }
+        else if (task.status === "failed") { setError(task.error || t('common.error')); setStatus(null); clearInterval(interval); }
         else { setStatus(`Task ${tid}: ${task.status}...`); }
       } catch { clearInterval(interval); }
     }, 2000);

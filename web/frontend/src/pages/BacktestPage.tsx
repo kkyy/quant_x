@@ -165,7 +165,7 @@ function ResultsTab() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-zinc-400 border-b border-zinc-200">
-                  <th className="text-left py-2 text-xs uppercase tracking-wide">File</th>
+                  <th className="text-left py-2 text-xs uppercase tracking-wide">{t('common.filename')}</th>
                   <th className="text-right py-2 text-xs uppercase tracking-wide">{t('common.sizeKb')}</th>
                 </tr>
               </thead>
