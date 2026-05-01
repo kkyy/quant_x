@@ -1,0 +1,4 @@
+instrument,datetime,profit_growth,inventory_turn_days,asset_turnover,current_asset_turn_days,roa_alt,inventory_turnover,asset_turn_days,equity_turnover,roe_weighted,revenue_growth,current_asset_turnover,gross_margin,roe,ocf_to_np,roa,eps,ar_turnover,fixed_asset_turnover,net_margin,ar_turn_days
+SH600634,2021-03-31,42.501939238222,,0.0005,128571.4286,-9.9275,,180000,,,-99.5497,0.0007,-16.5760621123,,-0.022770335765,-9.9275,-0.3398,0.3529,,-18925.4706,255.0298
+SH600634,2021-06-30,94.188681591075,,0.0006,200000.0,-5.927,,300000,,,-99.473,0.0009,-76.2517776251,,-16.026384912808,-5.927,-0.1993,0.3966,,-9204.1579,453.8578
+SH600634,2021-09-30,88.311249658244,,0.0009,225000.0,-9.7292,,300000,,,-99.2566,0.0012,-77.3153076106,,-13.239306712999,-9.7292,-0.3267,0.5183,,-10635.4953,520.9338
