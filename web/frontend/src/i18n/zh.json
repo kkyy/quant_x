@@ -185,7 +185,11 @@
     "topk": "Top K",
     "nDrop": "N Drop",
     "holdThresh": "持仓阈值",
-    "savedOk": "保存成功"
+    "savedOk": "保存成功",
+    "regimeLabelCalm_bull": "平稳牛市",
+    "regimeLabelCalm_bear": "平稳熊市",
+    "regimeLabelVolatile_bull": "震荡牛市",
+    "regimeLabelVolatile_bear": "震荡熊市"
   },
   "system": {
     "title": "系统",

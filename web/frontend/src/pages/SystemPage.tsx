@@ -120,21 +120,21 @@ export function SystemPage() {
 
   return (
     <div className="space-y-4 max-w-5xl">
-      <h2 className="text-2xl font-bold">{t("system.title")}</h2>
+      <h2 className="text-2xl font-bold text-zinc-900">{t("system.title")}</h2>
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-zinc-200">
-        {tabs.map((t) => (
+        {tabs.map((tb) => (
           <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
+            key={tb.key}
+            onClick={() => setTab(tb.key)}
             className={`px-4 py-2 text-sm font-medium transition-colors ${
-              tab === t.key
+              tab === tb.key
                 ? "border-b-2 border-amber-500 text-amber-600"
                 : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700"
             }`}
           >
-            {t.label}
+            {tb.label}
           </button>
         ))}
       </div>
@@ -180,7 +180,7 @@ export function SystemPage() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             {logFile && (
-              <span className="text-sm text-zinc-500">File: {logFile}</span>
+              <span className="text-sm text-zinc-500">{t('system.logFile', { file: logFile })}</span>
             )}
             <button
               onClick={fetchLogs}

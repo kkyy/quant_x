@@ -185,7 +185,11 @@
     "topk": "Top K",
     "nDrop": "N Drop",
     "holdThresh": "Hold Thresh",
-    "savedOk": "Saved successfully"
+    "savedOk": "Saved successfully",
+    "regimeLabelCalm_bull": "Calm Bull",
+    "regimeLabelCalm_bear": "Calm Bear",
+    "regimeLabelVolatile_bull": "Volatile Bull",
+    "regimeLabelVolatile_bear": "Volatile Bear"
   },
   "system": {
     "title": "System",
