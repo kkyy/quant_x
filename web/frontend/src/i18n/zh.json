@@ -60,7 +60,7 @@
     "cacheSummary": "{{count}} 类型，{{total}} MB 合计",
     "savedModels": "已保存模型",
     "noCache": "暂无缓存数据",
-    "latest": "最新: {{name}} ({{date}})"
+    "latest": "最新"
   },
   "data": {
     "title": "数据管理",
@@ -169,7 +169,7 @@
     "topN": "Top N",
     "startMining": "开始挖掘",
     "mining": "挖掘中...",
-    "taskSubmitted": "任务已提交。ID: "
+    "taskSubmitted": "任务已提交。ID: {{id}}"
   },
   "config": {
     "title": "配置",

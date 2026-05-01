@@ -60,7 +60,7 @@
     "cacheSummary": "{{count}} types, {{total}} MB total",
     "savedModels": "Saved Models",
     "noCache": "No cache data",
-    "latest": "Latest: {{name}} ({{date}})"
+    "latest": "Latest"
   },
   "data": {
     "title": "Data Management",
@@ -169,7 +169,7 @@
     "topN": "Top N",
     "startMining": "Start Mining",
     "mining": "Mining...",
-    "taskSubmitted": "Task submitted. ID: "
+    "taskSubmitted": "Task submitted. ID: {{id}}"
   },
   "config": {
     "title": "Config",
