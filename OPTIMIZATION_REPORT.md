@@ -391,11 +391,12 @@ signal:
 
 | 项目 | 原因 |
 |------|------|
-| CAP-02 基本面因子库 | 需接入财报数据源，涉及数据许可和大量额外爬虫开发 |
-| CAP-06 市场状态感知切换机制 | 已实现 regime 因子；信号切换逻辑与 TopkDropout 架构集成复杂，标记为 future work |
+| CAP-02 基本面因子库 | 部分完成：已实现 financial/valuation/balance_sheet 等基本面因子；质量/成长类基本面因子仍待扩展 |
+| CAP-06 市场状态感知切换机制 | ✅ 已完成：`strategy/regime_switch.py` 已接入 `run_daily.py` 与 `run_scheduled_rebalance.py` |
 | CAP-07 持仓止损/波动率目标 | 需修改 qlib 策略层，超出当前架构边界 |
 | GAP-02 次日开盘价成交 | 需 qlib 层配置 `deal_price: open`，为 config 级修改，用户按需自行调整 |
 | GAP-03 历史板块快照 | 需构建历史成分股时间序列数据库，工程量大 |
+| BUG-08 qlib init 保护 | ✅ 已完成：`factor_mining.py` 已增加 qlib 初始化检查 |
 | BUG-09 轻微隐患 | 风险低，不影响核心功能，标记为 future work |
 
 ---
@@ -681,11 +682,12 @@ monitor = compute_rolling_ic(pred, price_data, horizon=5, window=20)
 | 项目 | 原因 |
 |------|------|
 | CAP-02 基本面因子库 | 需接入财报数据源，涉及数据许可和大量额外爬虫开发 |
-| CAP-06 市场状态感知 | 需要设计信号切换机制，与现有 TopkDropout 架构集成复杂 |
+| CAP-06 市场状态感知 | ✅ 已完成：`strategy/regime_switch.py` 已接入 `run_daily.py` 与 `run_scheduled_rebalance.py` |
 | CAP-07 持仓止损/波动率目标 | 需修改 qlib 策略层，超出当前架构边界 |
 | GAP-02 次日开盘价成交 | 需 qlib 层配置 `deal_price: open`，为 config 级修改，用户按需自行调整 |
 | GAP-03 历史板块快照 | 需构建历史成分股时间序列数据库，工程量大 |
-| BUG-08/09 轻微隐患 | 风险低，不影响核心功能，标记为 future work |
+| BUG-08 qlib init 保护 | ✅ 已完成：`factor_mining.py` 已增加 qlib 初始化检查 |
+| BUG-09 轻微隐患 | 风险低，不影响核心功能，标记为 future work |
 
 ---
 

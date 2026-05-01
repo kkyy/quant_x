@@ -285,7 +285,12 @@
 - Walk-forward 自定义折叠：`--folds-config` 已支持。
 - 统计显著性：walk-forward 汇总已有 `sharpe_ttest_pvalue` / `return_ttest_pvalue`。
 - 换手率与滑点敏感性基础分析：`avg_turnover`、`--slippage-sensitivity` 已存在。
-- 基础基本面因子：`features/fundamental_factor.py` 已提供估值类因子抓取与缓存能力。
+- 基础基本面因子：`features/fundamental_factor.py` 已提供估值类与扩展财务因子（ROE、ROA、gross_margin、revenue_growth 等）。
+- 外部数据抓取：15 个领域 fetcher（含 sw1_industry 申万行业），`data/fetchers/` 已完整覆盖。
+- CSV 自定义因子：`features/csv_factor.py` 支持从 CSV 文件加载自定义因子。
+- 系统迭代日志：`docs/strategy_log/system_iteration_log.csv` 记录全系统迭代周期。
+- Web Dashboard 国际化：React 19 + react-i18next，支持中英文切换。
+- 因子注册表：20 个已注册因子（含 csv、regime、sector、technical、mined、northbound、fundamental 及 12 个 akshare 数据驱动因子）。
 
 ### 5.2 部分具备
 
@@ -301,8 +306,8 @@
 
 状态：部分具备。
 
-- 已有 valuation 类因子（如 `pe_ttm`、`pb`、`ps_ttm`、`dyr`）。
-- 仍缺质量、成长、财报滞后处理更完整的一套基本面框架。
+- 已有估值类因子（如 `pe_ttm`、`pb`、`ps_ttm`、`dyr`）和扩展财务因子（`roe`、`roa`、`gross_margin`、`net_margin`、`revenue_growth`、`profit_growth`、`ocf_to_np`、`fcf_yield`）。
+- 仍缺更完整的质量/成长因子框架和财报滞后处理。
 
 #### CAP-B03 归因分析
 
@@ -329,7 +334,7 @@
 
 #### CAP-C01 历史快照式行业/ST/证券状态数据
 
-这是当前最影响研究可信度的“数据层能力缺口”，优先级高于再增加几个新因子。
+这是当前最影响研究可信度的”数据层能力缺口”，优先级高于再增加几个新因子。当前已有申万一级行业 fetcher（`sw1_fetcher`），但仍缺时间序列式历史快照。
 
 #### CAP-C02 多标签或多持有期训练框架
 

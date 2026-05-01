@@ -7,7 +7,7 @@
 `quant_ex` 是基于 qlib + Alpha158 的 A 股量化选股框架，支持：
 
 - 多模型训练：qlib-native `LGBModel` 与自定义 `lgbm` / `xgb` / `ridge` / `lasso` / `mlp`
-- 额外因子：技术因子、行业/概念轮动因子、挖掘因子、市场状态感知因子（regime）、北向资金、基本面、质押、融资融券、内部交易、分析师预期、股东户数、分红、估值、资产负债表、业绩预告、机构持仓、回购、机构调研
+- 额外因子：技术因子、行业/概念轮动因子、挖掘因子、市场状态感知因子（regime）、北向资金、基本面、质押、融资融券、内部交易、分析师预期、股东户数、分红、估值、资产负债表、业绩预告、机构持仓、回购、机构调研、CSV 自定义因子
 - FactorScreener：IC/ICIR 阈值 + 相关性去重，自动过滤低质量因子
 - TopkDropout 策略回测、网格搜索、多 seed 稳健性评估
 - Walk-forward 时间交叉验证（支持自定义折叠 YAML、t 检验显著性）
@@ -19,7 +19,7 @@
 - 多渠道通知推送
 - 东方财富数据 SDK 与板块/成分股缓存
 - Claude API 驱动的回测参数自动优化
-- Web Dashboard：React + FastAPI 本地可视化面板（数据管理、模型训练、回测、信号、因子、配置）
+- Web Dashboard：React + FastAPI 本地可视化面板（数据管理、模型训练、回测、信号、因子、配置），支持中英文切换
 
 ## 运行环境
 
@@ -111,16 +111,16 @@ cd web/frontend && npm run build         # 输出到 web/frontend/dist/
 ## 目录职责
 
 - `config/`：配置文件。`base.yaml` 放 qlib 路径、市场、训练区间、策略、回测；`model.yaml` 放模型和因子配置；`walk_forward_folds.yaml.example` 是自定义折叠示例；`notify.yaml.example` 是通知配置模板。
-- `docs/strategy_log/`：长期保留的策略迭代表格日志。`strategy_iteration_log.csv` 记录策略配置路径、迭代日期、模型、参数、效果指标、结论和下一步对照实验方向；这是后续策略比较与 ablation 决策的首选入口。
-- `data/`：qlib 数据加载、股票池过滤（含流动性过滤）、行业数据提供；`utils.py` 是统一代码转换+缓存模块。`data/fetchers/`：14 个领域特定 fetcher（BaseDataFetcher 子类），各自缓存到 `cache/<domain>/`，TTL 可配置；入口为 `run_fetch_data.py --type <type>`。
-- `features/`：因子基类、注册表、技术因子、行业因子、挖掘因子（含 qlib init 保护）、市场状态因子；12 个 akshare 数据驱动因子（pledge, margin, insider, analyst, shareholder, dividend, valuation, balance_sheet, earnings_guidance, institutional, repurchase, visit）；`library/` 含 FactorScreener / FactorCleaner / FactorEvaluator。
+- `docs/strategy_log/`：长期保留的策略迭代表格日志。`strategy_iteration_log.csv` 记录策略配置路径、迭代日期、模型、参数、效果指标、结论和下一步对照实验方向；`system_iteration_log.csv` 记录系统级迭代周期（变更内容、基线范围、前后最佳 Sharpe、诊断评分、决策、收敛状态），通过 `strategy_iteration_ids` 列与策略日志关联。这是后续策略比较与 ablation 决策的首选入口。
+- `data/`：qlib 数据加载、股票池过滤（含流动性过滤）、行业数据提供；`utils.py` 是统一代码转换+缓存模块。`data/fetchers/`：15 个领域特定 fetcher（BaseDataFetcher 子类），各自缓存到 `cache/<domain>/`，TTL 可配置；入口为 `run_fetch_data.py --type <type>`。
+- `features/`：因子基类、注册表、技术因子、行业因子、挖掘因子（含 qlib init 保护）、市场状态因子；12 个 akshare 数据驱动因子（pledge, margin, insider, analyst, shareholder, dividend, valuation, balance_sheet, earnings_guidance, institutional, repurchase, visit）、CSV 自定义因子；`library/` 含 FactorScreener / FactorCleaner / FactorEvaluator。
 - `models/`：模型基类、注册表、训练器及各模型实现；训练产物含 `_meta.json` 和 `_feature_importance.json` sidecar。
 - `backtest/`：回测引擎、指标（含基准超额/IR/换手率）、网格搜索、信号诊断（IC 衰减/滚动 IC）、Brinson 归因。
 - `signals/`：信号生成（含停牌过滤/price_data 复用）、后处理（含市值中性化）。
 - `notify/`：通知推送渠道。
 - `crawler/`：东方财富 API SDK，应保持独立，不引入 qlib 依赖。
 - `agent/`：AI 参数优化器（Claude API）。
-- `web/`：Web Dashboard（FastAPI + React）。`web/api/` 是后端路由与服务层；`web/frontend/` 是 React 前端（Vite + TypeScript + Tailwind）。入口 `web/run_web.py`。
+- `web/`：Web Dashboard（FastAPI + React）。`web/api/` 是后端路由与服务层；`web/frontend/` 是 React 前端（Vite + TypeScript + Tailwind + react-i18next 中英文切换）。入口 `web/run_web.py`。
 - `test/`：pytest 测试。
 
 ## 架构与数据流
@@ -169,7 +169,7 @@ DataLoader(qlib D.features / DatasetH)
 python run_train.py --list-registry
 ```
 
-预期因子注册包含：`sector, technical, mined, regime, northbound, fundamental, pledge, margin, insider, analyst, shareholder, dividend, valuation, balance_sheet, earnings_guidance, institutional, repurchase, visit`
+预期因子注册包含：`sector, technical, mined, regime, northbound, fundamental, pledge, margin, insider, analyst, shareholder, dividend, valuation, balance_sheet, earnings_guidance, institutional, repurchase, visit, csv`
 
 ### 因子流水线与 FactorScreener
 
@@ -212,6 +212,8 @@ kept = pipeline.compute_with_screening(price_data, forward_returns=label)
 | 机构持仓因子 | `features/institutional_factor.py` (fund_hold_count, qfii_hold_flag 等) |
 | 回购因子 | `features/repurchase_factor.py` (repurchase_completion_pct, repurchase_active 等) |
 | 机构调研因子 | `features/visit_factor.py` (visit_count_{w}d, visit_count_chg 等) |
+| CSV 自定义因子 | `features/csv_factor.py` (从 CSV 文件加载自定义因子) |
+| 系统迭代日志 | `docs/strategy_log/system_iteration_log.csv` (全系统迭代周期记录) |
 
 ### 向后兼容原则
 
@@ -267,11 +269,12 @@ kept = pipeline.compute_with_screening(price_data, forward_returns=label)
 - 后台任务使用 `TaskManager.start_sync_task()` 包装阻塞函数，前端通过 SSE 流获取进度。
 - 路径常量定义在 `web/api/deps.py`（MODELS_DIR、CACHE_DIR 等）。
 
-### 前端（React + TypeScript）
+### 前端（React 19 + TypeScript）
 
 - 页面组件放在 `web/frontend/src/pages/`，每个页面对应一个 tabbed 布局。
 - API 调用统一通过 `src/api/client.ts` 的 `get`/`post`/`put`/`del` 函数。
 - SSE 流使用 `src/hooks/useSSE.ts` hook。
+- 国际化使用 `react-i18next`，翻译文件在 `src/i18n/`（en.json / zh.json），切换组件为 `LanguageToggle`。
 - 共享 UI 组件放在 `src/components/`。
 - 使用 Tailwind CSS 类，不引入额外 CSS 框架。
 

@@ -11,7 +11,7 @@
 - LightGBM bootstrap ensemble / bagging
 - TopkDropout 策略回测、参数网格搜索、多 seed 稳健性评估
 - Walk-forward 时间交叉验证，支持自定义折叠 YAML
-- 因子流水线：technical / sector / mined / regime / northbound / fundamental
+- 因子流水线：technical / sector / mined / regime / northbound / fundamental / csv 自定义因子
 - FactorScreener：基于 IC / ICIR / 相关性去重的因子筛选
 - 信号后处理：rank / zscore、行业中性化、市值中性化
 - 市场状态识别与策略参数切换（regime switch）
@@ -22,7 +22,7 @@
 - Bark / PushPlus / 钉钉 / Server 酱 / 微信模板消息通知
 - 东方财富行业与概念数据缓存
 - Claude API 辅助参数优化
-- Web Dashboard：本地可视化面板（数据管理、模型训练/浏览、回测、信号生成、因子分析、配置编辑）
+- Web Dashboard：本地可视化面板（数据管理、模型训练/浏览、回测、信号生成、因子分析、配置编辑），中英文切换
 
 > 本项目仅用于研究和辅助决策，不构成投资建议。
 
@@ -52,8 +52,8 @@
 ### Python
 
 - 目标 Python 版本：`>=3.9`
-- 推荐做语法检查、导入检查和轻量测试的解释器：`/Users/weidian/code/algorithms/Qbot/.venv/bin/python3.9`
-- 项目自己的 `.venv` 可用于本仓库训练/回测，但不应默认假设依赖完整
+- 项目默认解释器：`./.venv/bin/python`（当前为 Python 3.11，已包含运行依赖如 akshare）
+- 除非用户明确要求，不要切换到外部 Python 环境
 
 ### qlib 数据目录
 
@@ -100,7 +100,7 @@ technical, sector, mined, regime
 ### 3. 运行轻量测试
 
 ```bash
-/Users/weidian/code/algorithms/Qbot/.venv/bin/python3.9 -m pytest test/test_universe_filter.py test/test_trainer.py test/test_data_sources.py
+./.venv/bin/python -m pytest test/test_universe_filter.py test/test_trainer.py test/test_data_sources.py
 ```
 
 ---
@@ -125,6 +125,7 @@ technical, sector, mined, regime
 ./.venv/bin/python run_fetch_data.py --type shareholder     # 股东户数
 ./.venv/bin/python run_fetch_data.py --type valuation       # 估值（PE/PB/市值）
 ./.venv/bin/python run_fetch_data.py --type visit           # 机构调研
+./.venv/bin/python run_fetch_data.py --type sw1_industry   # 申万一级行业
 ./.venv/bin/python run_fetch_data.py --type all             # 全量获取
 
 # 限定范围
@@ -398,7 +399,8 @@ model:
       - name: earnings_guidance # 业绩预告类型与惊喜度
       - name: institutional     # 机构持仓（基金/QFII/社保）
       - name: repurchase        # 回购完成率
-      - name: visit             # 机构调研频次
+      - name: visit             # 机构调研
+      - name: csv               # CSV 自定义因子频次
 ```
 
 `regime` 因子会产出：`regime_trend_{w}d`、`regime_vol_{w}d`、`regime_breadth_{w}d`、`regime_corr_{w}d`、`regime_drawdown`、`regime_label`。
@@ -499,7 +501,7 @@ print(format_attribution(result))
 
 ## Web Dashboard
 
-基于 React + FastAPI 的本地可视化面板，提供所有 quant_ex 功能的交互式访问。
+基于 React 19 + FastAPI 的本地可视化面板，提供所有 quant_ex 功能的交互式访问，支持中英文切换。
 
 ### 启动
 
@@ -558,6 +560,8 @@ config/base.yaml → config/model.yaml → config/notify.yaml → --config 覆�
 - `config/model.yaml`：模型参数、额外因子、ensemble
 - `config/notify.yaml`：通知渠道配置，建议从 `config/notify.yaml.example` 复制
 - `config/strategy_candidates.yaml`：长期保留的研究结论，不会被自动加载
+- `docs/strategy_log/strategy_iteration_log.csv`：策略级迭代历史（配置路径、参数、指标、结论），后续策略比较与 ablation 决策的首选入口
+- `docs/strategy_log/system_iteration_log.csv`：系统级迭代历史（全系统变更、基线范围、前后最佳 Sharpe、诊断评分、收敛状态），通过 `strategy_iteration_ids` 与策略日志关联
 - `config/walk_forward_folds.yaml.example`：自定义时间折模板
 
 ---
@@ -571,9 +575,9 @@ quant_ex/
 │   ├── loader.py
 │   ├── sector.py
 │   ├── universe.py
-│   ├── fetchers/          # 14 个 akshare 数据 fetcher（financial/northbound/pledge/margin/
+│   ├── fetchers/          # 15 个 akshare 数据 fetcher（financial/northbound/pledge/margin/
 │   │                      #   insider/analyst/shareholder/dividend/valuation/balance_sheet/
-│   │                      #   earnings_guidance/institutional/repurchase/visit）
+│   │                      #   earnings_guidance/institutional/repurchase/visit/sw1_industry）
 │   ├── qlib_update/
 │   └── sources/
 ├── features/
@@ -595,6 +599,7 @@ quant_ex/
 │   ├── institutional_factor.py # 机构持仓
 │   ├── repurchase_factor.py    # 回购
 │   ├── visit_factor.py         # 机构调研
+│   ├── csv_factor.py           # CSV 自定义因子
 │   └── library/
 ├── models/
 ├── backtest/
@@ -610,11 +615,12 @@ quant_ex/
 │   │   ├── deps.py             # 共享依赖（配置加载、路径常量）
 │   │   ├── routers/            # 7 个 API 路由（system/data/models/backtest/signals/factors/config）
 │   │   └── services/           # TaskManager（后台任务 + SSE）、日志捕获
-│   ├── frontend/               # React 前端（Vite + TypeScript + Tailwind）
+│   ├── frontend/               # React 前端（Vite + TypeScript + Tailwind + react-i18next）
 │   │   ├── src/pages/          # 8 个页面组件
 │   │   ├── src/api/client.ts   # API 客户端
 │   │   ├── src/hooks/useSSE.ts # SSE 流 hook
-│   │   └── src/components/     # Sidebar、Layout、共享组件
+│   │   ├── src/i18n/           # 国际化翻译文件（en.json / zh.json）
+│   │   └── src/components/     # Sidebar、Layout、LanguageToggle、共享组件
 │   └── run_web.py              # 入口：uvicorn web.api.app:app
 ├── agent/
 └── test/

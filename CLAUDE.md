@@ -306,10 +306,11 @@ A local-only SPA (React + FastAPI) for interactive management of all quant_ex fe
 - `routers/`: system, data, models, backtest, signals, factors, config
 
 **Frontend** (`web/frontend/`):
-- React 18 + Vite + TypeScript + Tailwind CSS
+- React 19 + Vite + TypeScript + Tailwind CSS + react-i18next (en/zh)
 - 8 pages: Dashboard, Data Management, Models, Backtest, Signals, Factors, Config, System
 - `src/api/client.ts`: Typed API client (get/post/put/del)
 - `src/hooks/useSSE.ts`: SSE streaming hook for task progress
+- `src/i18n/`: Translation files (en.json, zh.json); LanguageToggle component in header
 - `src/components/`: Sidebar, Layout, shared components
 
 **Key patterns**:
@@ -337,6 +338,7 @@ Create an override YAML (e.g. `config/daily_csi1000.yaml`) and pass via `--confi
 
 - Do not treat strategy history as implicit in scattered markdown notes or output CSVs.
 - The authoritative table-style strategy history is `docs/strategy_log/strategy_iteration_log.csv`.
+- The authoritative system-level iteration history is `docs/strategy_log/system_iteration_log.csv`. Each row records one full system-iteration cycle: changes made, baseline scope, pre/post best Sharpe, diagnostic scores, decision, and convergence status. Cross-referenced with strategy_iteration_log.csv via the `strategy_iteration_ids` column.
 - Only durable research conclusions belong there: baseline candidates, overlay iterations, promoted/fallback strategies, and ablation decisions worth revisiting.
 - Temporary debug runs should stay in `optimization_results/` and should not be added unless they change the long-term decision surface.
 
@@ -347,3 +349,12 @@ Create an override YAML (e.g. `config/daily_csi1000.yaml`) and pass via `--confi
 **Following the strategy**: On your first day, execute only the buy actions from the next-day rebalance instructions. On subsequent days, follow both buy and sell actions.
 
 **Model backward compat**: Old `.pkl` files trained before `SectorFactorEngine` attributes existed (e.g., `include_sector_momentum`) will crash at inference. `SectorFactorEngine._ensure_compat_attrs()` fills missing attributes at `compute()` time. Same for `LGBMAlphaModel._ensure_runtime_defaults()` (covers `bagging_fraction`, `ensemble_seeds`, etc.).
+
+## Development Conventions
+
+- New params must have `None` or reasonable defaults -- never break existing code. New config options default to disabled.
+- Do not submit `config/notify.yaml`, `.env`, `config/local*.yaml`, or `config/secret*.yaml`.
+- Do not batch-format or refactor files you haven't otherwise changed.
+- For crawler changes: keep the main train/backtest path working offline (cache-based). Real network requests require user consent.
+- Operations involving network, downloads, external APIs, real push notifications, or real funds: confirm user intent first.
+- Check files for uncommitted changes before editing to avoid overwriting user work.
