@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { get, del } from "../api/client";
 
 interface CacheInfo {
@@ -26,6 +27,7 @@ interface DeleteResponse {
 type Tab = "runtime" | "logs" | "cache";
 
 export function SystemPage() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("runtime");
 
   // Runtime state
@@ -111,25 +113,25 @@ export function SystemPage() {
   };
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "runtime", label: "Runtime" },
-    { key: "logs", label: "Logs" },
-    { key: "cache", label: "Cache" },
+    { key: "runtime", label: t("system.runtimeTab") },
+    { key: "logs", label: t("system.logsTab") },
+    { key: "cache", label: t("system.cacheTab") },
   ];
 
   return (
     <div className="space-y-4 max-w-5xl">
-      <h2 className="text-2xl font-bold">System</h2>
+      <h2 className="text-2xl font-bold">{t("system.title")}</h2>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b">
+      <div className="flex gap-1 border-b border-zinc-200">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`px-4 py-2 text-sm font-medium transition-colors ${
               tab === t.key
-                ? "border-b-2 border-blue-600 text-blue-600"
-                : "text-gray-500 hover:text-gray-700"
+                ? "border-b-2 border-amber-500 text-amber-600"
+                : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700"
             }`}
           >
             {t.label}
@@ -146,26 +148,26 @@ export function SystemPage() {
             </div>
           )}
           {runtimeLoading ? (
-            <p className="text-gray-500 text-sm">Loading...</p>
+            <p className="text-zinc-500 text-sm">{t("common.loading")}</p>
           ) : runtime ? (
             <div className="grid grid-cols-3 gap-4">
-              <div className="border rounded-lg p-4">
-                <h3 className="text-sm text-gray-500 mb-1">Python Version</h3>
+              <div className="border border-zinc-200 rounded-lg p-4">
+                <h3 className="text-sm text-zinc-500 mb-1">{t("system.pythonVersion")}</h3>
                 <p className="text-sm font-mono">
                   {runtime.python_version.split(" ")[0]}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-xs text-zinc-400 mt-1">
                   {runtime.python_version.split(" ").slice(1).join(" ")}
                 </p>
               </div>
-              <div className="border rounded-lg p-4">
-                <h3 className="text-sm text-gray-500 mb-1">qlib Data Path</h3>
+              <div className="border border-zinc-200 rounded-lg p-4">
+                <h3 className="text-sm text-zinc-500 mb-1">{t("system.qlibPath")}</h3>
                 <p className="text-xs font-mono break-all">
                   {runtime.qlib_data_path || "not configured"}
                 </p>
               </div>
-              <div className="border rounded-lg p-4">
-                <h3 className="text-sm text-gray-500 mb-1">Saved Models</h3>
+              <div className="border border-zinc-200 rounded-lg p-4">
+                <h3 className="text-sm text-zinc-500 mb-1">{t("system.savedModels")}</h3>
                 <p className="text-2xl font-bold">{runtime.models_count}</p>
               </div>
             </div>
@@ -178,13 +180,13 @@ export function SystemPage() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             {logFile && (
-              <span className="text-sm text-gray-500">File: {logFile}</span>
+              <span className="text-sm text-zinc-500">File: {logFile}</span>
             )}
             <button
               onClick={fetchLogs}
-              className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50"
+              className="px-3 py-1.5 text-sm bg-white border border-zinc-300 rounded hover:bg-zinc-50"
             >
-              Refresh
+              {t("common.refresh")}
             </button>
           </div>
 
@@ -195,12 +197,12 @@ export function SystemPage() {
           )}
 
           {logsLoading ? (
-            <p className="text-gray-500 text-sm">Loading logs...</p>
+            <p className="text-zinc-500 text-sm">{t("common.loading")}</p>
           ) : (
-            <pre className="w-full bg-gray-900 text-gray-100 border rounded-lg p-4 text-xs font-mono overflow-auto max-h-[600px] leading-relaxed">
+            <pre className="w-full bg-zinc-900 text-zinc-100 border rounded-lg p-4 text-xs font-mono overflow-auto max-h-[600px] leading-relaxed">
               {logs.length > 0
                 ? logs.join("\n")
-                : "No log entries found"}
+                : t("system.noLogs")}
             </pre>
           )}
         </div>
@@ -216,26 +218,26 @@ export function SystemPage() {
           )}
 
           {cacheLoading ? (
-            <p className="text-gray-500 text-sm">Loading cache info...</p>
+            <p className="text-zinc-500 text-sm">{t("common.loading")}</p>
           ) : (
-            <div className="border rounded-lg overflow-hidden">
+            <div className="border border-zinc-200 rounded-lg overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50">
+                <thead className="bg-zinc-50">
                   <tr>
-                    <th className="text-left px-4 py-2">Type</th>
-                    <th className="text-right px-4 py-2">Files</th>
-                    <th className="text-right px-4 py-2">Size (MB)</th>
-                    <th className="text-left px-4 py-2">Latest</th>
-                    <th className="text-right px-4 py-2">Actions</th>
+                    <th className="text-left px-4 py-2">{t("common.type")}</th>
+                    <th className="text-right px-4 py-2">{t("common.files")}</th>
+                    <th className="text-right px-4 py-2">{t("common.sizeMb")}</th>
+                    <th className="text-left px-4 py-2">{t("common.latest")}</th>
+                    <th className="text-right px-4 py-2">{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {cacheEntries.map(([type, info]) => (
-                    <tr key={type} className="border-t hover:bg-gray-50">
+                    <tr key={type} className="border-t border-zinc-200 hover:bg-zinc-50">
                       <td className="px-4 py-2 font-mono text-xs">{type}</td>
                       <td className="text-right px-4 py-2">{info.file_count}</td>
                       <td className="text-right px-4 py-2">{info.total_size_mb}</td>
-                      <td className="px-4 py-2 text-xs text-gray-600">
+                      <td className="px-4 py-2 text-xs text-zinc-600">
                         {info.latest
                           ? new Date(info.latest).toLocaleDateString()
                           : "-"}
@@ -246,10 +248,10 @@ export function SystemPage() {
                           disabled={deletingType === type}
                           className="px-2 py-1 text-xs bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 disabled:opacity-50"
                         >
-                          {deletingType === type ? "Deleting..." : "Delete Expired"}
+                          {deletingType === type ? t("common.deleting") : t("common.deleteExpired")}
                         </button>
                         {deleteMessages[type] && (
-                          <span className="ml-2 text-xs text-gray-500">
+                          <span className="ml-2 text-xs text-zinc-500">
                             {deleteMessages[type]}
                           </span>
                         )}
@@ -258,8 +260,8 @@ export function SystemPage() {
                   ))}
                   {cacheEntries.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-4 text-center text-gray-400">
-                        No cache data
+                      <td colSpan={5} className="px-4 py-4 text-center text-zinc-400">
+                        {t("system.noCache")}
                       </td>
                     </tr>
                   )}

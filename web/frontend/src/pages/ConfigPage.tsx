@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { get, put } from "../api/client";
 
 interface ConfigResponse {
@@ -22,6 +23,7 @@ interface RegimeRule {
 }
 
 export function ConfigPage() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("editor");
 
   // Editor state
@@ -173,7 +175,7 @@ export function ConfigPage() {
     setEditorError(null);
     try {
       await put<SaveResponse>(`/config/${selectedConfig}`, { content });
-      setSaveMessage("Saved successfully");
+      setSaveMessage(t("config.savedOk"));
     } catch (err: any) {
       setEditorError(err.message);
     } finally {
@@ -186,9 +188,9 @@ export function ConfigPage() {
   };
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "editor", label: "Editor" },
-    { key: "strategy_candidates", label: "Strategy Candidates" },
-    { key: "regime_rules", label: "Regime Rules" },
+    { key: "editor", label: t("config.editorTab") },
+    { key: "strategy_candidates", label: t("config.strategyTab") },
+    { key: "regime_rules", label: t("config.regimeTab") },
   ];
 
   const regimeLabels: Record<string, string> = {
@@ -200,18 +202,18 @@ export function ConfigPage() {
 
   return (
     <div className="space-y-4 max-w-5xl">
-      <h2 className="text-2xl font-bold">Config</h2>
+      <h2 className="text-2xl font-bold">{t("config.title")}</h2>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b">
+      <div className="flex gap-1 border-b border-zinc-200">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => { setTab(t.key); setEditorError(null); setSaveMessage(null); }}
             className={`px-4 py-2 text-sm font-medium transition-colors ${
               tab === t.key
-                ? "border-b-2 border-blue-600 text-blue-600"
-                : "text-gray-500 hover:text-gray-700"
+                ? "border-b-2 border-amber-500 text-amber-600"
+                : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700"
             }`}
           >
             {t.label}
@@ -229,8 +231,8 @@ export function ConfigPage() {
                 onClick={() => setSelectedConfig(c.key)}
                 className={`px-3 py-1.5 text-sm rounded border ${
                   selectedConfig === c.key
-                    ? "bg-blue-600 text-white border-blue-600"
-                    : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                    ? "bg-amber-500 text-zinc-900 border-amber-500"
+                    : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50"
                 }`}
               >
                 {c.label}
@@ -251,28 +253,28 @@ export function ConfigPage() {
           )}
 
           {loading ? (
-            <p className="text-gray-500 text-sm">Loading...</p>
+            <p className="text-zinc-500 text-sm">{t("common.loading")}</p>
           ) : (
             <>
               <textarea
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                className="w-full h-96 font-mono text-sm border rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full h-96 font-mono text-sm border border-zinc-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-amber-400"
                 spellCheck={false}
               />
               <div className="flex gap-2">
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+                  className="px-4 py-2 bg-amber-500 text-zinc-900 font-medium text-sm rounded hover:bg-amber-600 disabled:opacity-50"
                 >
-                  {saving ? "Saving..." : "Save"}
+                  {saving ? t("common.saving") : t("common.save")}
                 </button>
                 <button
                   onClick={handleReload}
-                  className="px-4 py-2 bg-white text-gray-700 text-sm rounded border border-gray-300 hover:bg-gray-50"
+                  className="px-4 py-2 bg-white text-zinc-700 text-sm rounded border border-zinc-300 hover:bg-zinc-50"
                 >
-                  Reload
+                  {t("common.reload")}
                 </button>
               </div>
             </>
@@ -289,9 +291,9 @@ export function ConfigPage() {
             </div>
           )}
           {strategyLoading ? (
-            <p className="text-gray-500 text-sm">Loading...</p>
+            <p className="text-zinc-500 text-sm">{t("common.loading")}</p>
           ) : (
-            <pre className="w-full bg-gray-50 border rounded-lg p-4 text-sm font-mono overflow-auto max-h-[600px] whitespace-pre-wrap">
+            <pre className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-4 text-sm font-mono overflow-auto max-h-[600px] whitespace-pre-wrap">
               {strategyContent}
             </pre>
           )}
@@ -307,39 +309,39 @@ export function ConfigPage() {
             </div>
           )}
           {regimeLoading ? (
-            <p className="text-gray-500 text-sm">Loading...</p>
+            <p className="text-zinc-500 text-sm">{t("common.loading")}</p>
           ) : (
             <>
-              <div className="border rounded-lg p-4">
+              <div className="border border-zinc-200 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-sm font-medium">Regime Switching:</span>
+                  <span className="text-sm font-medium">{t("config.regimeSwitching")}</span>
                   {regimeEnabled ? (
                     <span className="inline-block px-2 py-0.5 text-xs bg-green-100 text-green-800 rounded">
-                      enabled
+                      {t("common.enabled")}
                     </span>
                   ) : (
-                    <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 text-gray-500 rounded">
-                      disabled
+                    <span className="inline-block px-2 py-0.5 text-xs bg-zinc-100 text-zinc-500 rounded">
+                      {t("common.disabled")}
                     </span>
                   )}
                 </div>
               </div>
 
               {regimeRules.length > 0 ? (
-                <div className="border rounded-lg overflow-hidden">
+                <div className="border border-zinc-200 rounded-lg overflow-hidden">
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
+                    <thead className="bg-zinc-50">
                       <tr>
-                        <th className="text-left px-4 py-2">Key</th>
-                        <th className="text-left px-4 py-2">Regime</th>
-                        <th className="text-right px-4 py-2">Top K</th>
-                        <th className="text-right px-4 py-2">N Drop</th>
-                        <th className="text-right px-4 py-2">Hold Thresh</th>
+                        <th className="text-left px-4 py-2">{t("config.key")}</th>
+                        <th className="text-left px-4 py-2">{t("config.regime")}</th>
+                        <th className="text-right px-4 py-2">{t("config.topk")}</th>
+                        <th className="text-right px-4 py-2">{t("config.nDrop")}</th>
+                        <th className="text-right px-4 py-2">{t("config.holdThresh")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {regimeRules.map((r) => (
-                        <tr key={r.key} className="border-t hover:bg-gray-50">
+                        <tr key={r.key} className="border-t border-zinc-200 hover:bg-zinc-50">
                           <td className="px-4 py-2 font-mono text-xs">{r.key}</td>
                           <td className="px-4 py-2">
                             {regimeLabels[r.key] || r.label}
@@ -353,13 +355,13 @@ export function ConfigPage() {
                   </table>
                 </div>
               ) : (
-                <div className="border rounded-lg p-4 text-center text-gray-400 text-sm">
-                  No regime rules found in config
+                <div className="border border-zinc-200 rounded-lg p-4 text-center text-zinc-400 text-sm">
+                  {t("config.noRegimeRules")}
                 </div>
               )}
 
-              <p className="text-xs text-gray-400">
-                Regime rules are read-only. Edit base.yaml to modify.
+              <p className="text-xs text-zinc-400">
+                {t("config.regimeNote")}
               </p>
             </>
           )}

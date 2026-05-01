@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { get, post } from "../api/client";
 
 interface FactorItem {
@@ -17,6 +18,7 @@ interface TaskResponse {
 type Tab = "library" | "evaluation" | "mining";
 
 export function FactorsPage() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("library");
   const [library, setLibrary] = useState<LibraryItem[]>([]);
   const [factors, setFactors] = useState<FactorItem[]>([]);
@@ -90,25 +92,25 @@ export function FactorsPage() {
   };
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "library", label: "Library" },
-    { key: "evaluation", label: "Evaluation" },
-    { key: "mining", label: "Mining" },
+    { key: "library", label: t("factors.libraryTab") },
+    { key: "evaluation", label: t("factors.evaluationTab") },
+    { key: "mining", label: t("factors.miningTab") },
   ];
 
   return (
     <div className="space-y-4 max-w-5xl">
-      <h2 className="text-2xl font-bold">Factors</h2>
+      <h2 className="text-2xl font-bold">{t("factors.title")}</h2>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b">
+      <div className="flex gap-1 border-b border-zinc-200">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => { setTab(t.key); setError(null); }}
             className={`px-4 py-2 text-sm font-medium transition-colors ${
               tab === t.key
-                ? "border-b-2 border-blue-600 text-blue-600"
-                : "text-gray-500 hover:text-gray-700"
+                ? "border-b-2 border-amber-500 text-amber-600"
+                : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700"
             }`}
           >
             {t.label}
@@ -122,32 +124,32 @@ export function FactorsPage() {
         </div>
       )}
 
-      {loading && <p className="text-gray-500 text-sm">Loading...</p>}
+      {loading && <p className="text-zinc-500 text-sm">{t("common.loading")}</p>}
 
       {/* Library tab */}
       {tab === "library" && !loading && (
         <div className="border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50">
+            <thead className="bg-zinc-50">
               <tr>
-                <th className="text-left px-4 py-2">Name</th>
-                <th className="text-left px-4 py-2">Class</th>
-                <th className="text-left px-4 py-2">Status</th>
+                <th className="text-left px-4 py-2">{t("common.name")}</th>
+                <th className="text-left px-4 py-2">{t("common.class")}</th>
+                <th className="text-left px-4 py-2">{t("common.status")}</th>
               </tr>
             </thead>
             <tbody>
               {library.map((f) => (
-                <tr key={f.name} className="border-t hover:bg-gray-50">
+                <tr key={f.name} className="border-t border-zinc-200 hover:bg-zinc-50">
                   <td className="px-4 py-2 font-mono text-xs">{f.name}</td>
-                  <td className="px-4 py-2 text-xs text-gray-600">{f.class}</td>
+                  <td className="px-4 py-2 text-xs text-zinc-600">{f.class}</td>
                   <td className="px-4 py-2">
                     {f.enabled ? (
                       <span className="inline-block px-2 py-0.5 text-xs bg-green-100 text-green-800 rounded">
-                        enabled
+                        {t("common.enabled")}
                       </span>
                     ) : (
-                      <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 text-gray-500 rounded">
-                        disabled
+                      <span className="inline-block px-2 py-0.5 text-xs bg-zinc-100 text-zinc-500 rounded">
+                        {t("common.disabled")}
                       </span>
                     )}
                   </td>
@@ -155,8 +157,8 @@ export function FactorsPage() {
               ))}
               {library.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="px-4 py-4 text-center text-gray-400">
-                    No factors registered
+                  <td colSpan={3} className="px-4 py-4 text-center text-zinc-400">
+                    {t("factors.noFactors")}
                   </td>
                 </tr>
               )}
@@ -170,13 +172,13 @@ export function FactorsPage() {
         <div className="space-y-4">
           <div className="border rounded-lg p-4 space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Select Factor
+              <label className="block text-sm font-medium text-zinc-700 mb-1">
+                {t("factors.selectFactor")}
               </label>
               <select
                 value={selectedFactor}
                 onChange={(e) => setSelectedFactor(e.target.value)}
-                className="w-full max-w-xs border rounded px-3 py-2 text-sm"
+                className="w-full max-w-xs border border-zinc-300 rounded-md bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
               >
                 {factors.map((f) => (
                   <option key={f.name} value={f.name}>
@@ -188,13 +190,13 @@ export function FactorsPage() {
             <button
               onClick={handleEvaluate}
               disabled={evalSubmitting || !selectedFactor}
-              className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+              className="px-4 py-2 bg-amber-500 text-zinc-900 font-medium text-sm rounded hover:bg-amber-600 disabled:opacity-50"
             >
-              {evalSubmitting ? "Evaluating..." : "Evaluate"}
+              {evalSubmitting ? t("common.evaluating") : t("common.evaluate")}
             </button>
             {evalTaskId && (
-              <p className="text-xs text-gray-500">
-                Task submitted. ID: <span className="font-mono">{evalTaskId}</span>
+              <p className="text-xs text-zinc-500">
+                {t("factors.taskSubmitted", { id: evalTaskId })}
               </p>
             )}
           </div>
@@ -207,51 +209,51 @@ export function FactorsPage() {
           <div className="border rounded-lg p-4 space-y-4">
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Min IC
+                <label className="block text-sm font-medium text-zinc-700 mb-1">
+                  {t("factors.minIc")}
                 </label>
                 <input
                   type="number"
                   step="0.01"
                   value={minIc}
                   onChange={(e) => setMinIc(e.target.value)}
-                  className="w-full border rounded px-3 py-2 text-sm"
+                  className="w-full border border-zinc-300 rounded-md bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Min ICIR
+                <label className="block text-sm font-medium text-zinc-700 mb-1">
+                  {t("factors.minIcir")}
                 </label>
                 <input
                   type="number"
                   step="0.1"
                   value={minIcir}
                   onChange={(e) => setMinIcir(e.target.value)}
-                  className="w-full border rounded px-3 py-2 text-sm"
+                  className="w-full border border-zinc-300 rounded-md bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Top N
+                <label className="block text-sm font-medium text-zinc-700 mb-1">
+                  {t("factors.topN")}
                 </label>
                 <input
                   type="number"
                   value={topN}
                   onChange={(e) => setTopN(e.target.value)}
-                  className="w-full border rounded px-3 py-2 text-sm"
+                  className="w-full border border-zinc-300 rounded-md bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
                 />
               </div>
             </div>
             <button
               onClick={handleMine}
               disabled={mineSubmitting}
-              className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+              className="px-4 py-2 bg-amber-500 text-zinc-900 font-medium text-sm rounded hover:bg-amber-600 disabled:opacity-50"
             >
-              {mineSubmitting ? "Mining..." : "Start Mining"}
+              {mineSubmitting ? t("factors.mining") : t("factors.startMining")}
             </button>
             {mineTaskId && (
-              <p className="text-xs text-gray-500">
-                Task submitted. ID: <span className="font-mono">{mineTaskId}</span>
+              <p className="text-xs text-zinc-500">
+                {t("factors.taskSubmitted", { id: mineTaskId })}
               </p>
             )}
           </div>
