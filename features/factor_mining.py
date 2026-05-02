@@ -224,7 +224,12 @@ class FactorMiner:
 
     def _eval(self, factor: pd.Series) -> Tuple[float, float]:
         """Compute rank-IC and ICIR."""
-        aligned = pd.concat([factor, self.label], axis=1, join="inner").dropna()
+        # Ensure index level order matches (factor uses instrument/datetime,
+        # but label from dataset.prepare may use datetime/instrument)
+        label = self.label
+        if factor.index.names != label.index.names:
+            label = label.reorder_levels(factor.index.names)
+        aligned = pd.concat([factor, label], axis=1, join="inner").dropna()
         aligned.columns = ["f", "y"]
 
         if len(aligned) < 100:

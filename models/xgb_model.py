@@ -70,9 +70,10 @@ class XGBAlphaModel(BaseAlphaModel):
     def fit(self, dataset, **kwargs) -> "XGBAlphaModel":
         import xgboost as xgb
 
-        X_tr, y_tr = dataset.prepare("train", col_set=["feature", "label"], data_key="learn")
-        X_va, y_va = dataset.prepare("valid", col_set=["feature", "label"], data_key="learn")
-        y_tr, y_va = y_tr.squeeze(), y_va.squeeze()
+        df_tr = dataset.prepare("train", col_set=["feature", "label"], data_key="learn")
+        df_va = dataset.prepare("valid", col_set=["feature", "label"], data_key="learn")
+        X_tr, y_tr = df_tr.xs("feature", axis=1, level=0), df_tr.xs("label", axis=1, level=0).squeeze()
+        X_va, y_va = df_va.xs("feature", axis=1, level=0), df_va.xs("label", axis=1, level=0).squeeze()
 
         X_tr = self._merge_extra(X_tr, self.extra_factors)
         X_va = self._merge_extra(X_va, self.extra_factors)
