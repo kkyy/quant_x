@@ -422,7 +422,7 @@ def _run_real_rebalance(config: dict, cfg: Dict[str, Any], trade_date: str, next
     metrics = _last_metrics(report)
     name_map = _load_stock_names()
     sector_map = _load_sector_map(config)
-    return _format_report(
+    base_report = _format_report(
         trade_date=trade_date,
         next_trade_date=next_trade_date,
         latest_position_date=latest_dt.strftime("%Y-%m-%d"),
@@ -434,6 +434,12 @@ def _run_real_rebalance(config: dict, cfg: Dict[str, Any], trade_date: str, next
         name_map=name_map,
         sector_map=sector_map,
     )
+    # Overlay drawdown monitoring
+    drawdown = _compute_cumulative_drawdown(report)
+    overlay_warning = _check_overlay_monitor(config, drawdown)
+    if overlay_warning:
+        base_report = base_report.rstrip() + "\n\n" + overlay_warning
+    return base_report
 
 
 def _last_metrics(report: pd.DataFrame) -> Dict[str, float]:
@@ -444,6 +450,38 @@ def _last_metrics(report: pd.DataFrame) -> Dict[str, float]:
         return {}
     row = report.iloc[-1]
     return {col: float(row[col]) for col in cols if pd.notna(row[col])}
+
+
+def _compute_cumulative_drawdown(report: pd.DataFrame) -> float:
+    """Return the current cumulative drawdown from the backtest report."""
+    if report is None or report.empty or "return" not in report.columns:
+        return 0.0
+    daily_ret = pd.to_numeric(report["return"], errors="coerce").fillna(0)
+    cum = (1 + daily_ret).cumprod()
+    running_max = cum.cummax()
+    dd = (cum - running_max) / running_max
+    return float(dd.iloc[-1]) if not dd.empty else 0.0
+
+
+def _check_overlay_monitor(config: dict, drawdown: float) -> Optional[str]:
+    """Check overlay drawdown against threshold; return warning string or None."""
+    mon = config.get("overlay_monitor", {})
+    if not mon.get("enabled", False):
+        return None
+    threshold = float(mon.get("drawdown_threshold", -0.15))
+    if drawdown > threshold:
+        return None
+    baseline_cfg = mon.get("baseline_config", "config/daily_csi1000.yaml")
+    baseline_topk = mon.get("baseline_topk", 15)
+    baseline_n_drop = mon.get("baseline_n_drop", 3)
+    baseline_hold = mon.get("baseline_hold_thresh", 5)
+    return (
+        f"⚠️ OVERLAY DRAWDOWN WARNING\n"
+        f"当前累计回撤: {drawdown:.1%}，已超过阈值 {threshold:.0%}\n"
+        f"建议切换至保守基线策略: {baseline_cfg}\n"
+        f"基线参数: topk={baseline_topk} / n_drop={baseline_n_drop} / hold={baseline_hold}\n"
+        f"(WFV证据: SVS是杠杆而非alpha，弱市放大损失)"
+    )
 
 
 def _mock_report(cfg: Dict[str, Any], trade_date: str, next_trade_date: str) -> str:

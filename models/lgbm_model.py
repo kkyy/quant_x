@@ -142,7 +142,6 @@ class LGBMAlphaModel(BaseAlphaModel):
                 "seed": ensemble_seed,
                 "feature_fraction_seed": ensemble_seed,
                 "bagging_seed": ensemble_seed,
-                "data_random_seed": ensemble_seed,
                 "extra_seed": ensemble_seed,
             }
             logger.info(

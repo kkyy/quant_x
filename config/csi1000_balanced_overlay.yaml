@@ -7,6 +7,13 @@
 # This is intentionally separate from daily_csi1000.yaml because walk-forward
 # validation showed weak years in 2021-2022. Treat it as a research overlay,
 # not the default practical candidate.
+#
+# REGIME RISK WARNING (WFV evidence, 2026-05-02):
+#   Same-model (2024-2026): Sharpe 3.10, MaxDD -9.8% — excellent.
+#   WFV out-of-sample:       2021 Sharpe -0.71, 2022 -0.59, MaxDD -32.8%.
+#   SVS filter is leverage, not alpha — it amplifies both gains and losses.
+#   When drawdown exceeds -15%, consider switching to baseline config
+#   (config/daily_csi1000.yaml, topk=15/n_drop=3/hold=5, no SVS).
 
 market:
   name: "csi300"
@@ -37,6 +44,17 @@ signal:
       enabled: true
       window: 20
       keep_top_pct: 0.4
+
+# Regime monitoring: compare overlay vs baseline signals daily.
+# When overlay_cumulative_drawdown exceeds -15%, rebalance report will
+# include a WARNING suggesting switch to baseline config.
+overlay_monitor:
+  enabled: true
+  drawdown_threshold: -0.15
+  baseline_config: "config/daily_csi1000.yaml"
+  baseline_topk: 15
+  baseline_n_drop: 3
+  baseline_hold_thresh: 5
 
 daily_rebalance:
   market: "csi300"

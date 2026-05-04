@@ -55,9 +55,8 @@ model:
   # ── Multi-seed ensemble ─────────────────────────────────────
   # 多 seed bagging 可以降低单次训练的随机性，但训练耗时会按 seed 数近似放大。
   ensemble:
-    enabled: true
+    enabled: false
     seeds: [42, 123, 2024]
-    bagging_fraction: 0.8
 
   # ── XGBoost hyper-parameters ─────────────────────────────────
   xgboost:
@@ -159,7 +158,7 @@ model:
       #   windows: [5, 10, 20, 60]
       #   include_raw: true
       #   include_change: true
-      #   use_individual_cache: true   # 优先读 individual CSV (数据更丰富)
+      #   use_individual_cache: true
 
       # 基本面因子 — 取消注释以启用扩展指标
       # metrics 支持分组名和单独列名:
@@ -227,8 +226,8 @@ model:
       #   float_market_cap       流通市值（绝对值）
       #   pe_ttm, pb, ps_ttm     估值比率（日频）
       #   peg, pcf               PEG、市现率
-      - name: "valuation"
-        include_change: false
+      # - name: "valuation"
+      #   include_change: false
 
       # 资产负债表因子（含营收/利润/资产绝对值）
       # 生成的特征:
