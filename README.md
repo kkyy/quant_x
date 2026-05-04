@@ -1,12 +1,12 @@
 # quant_ex
 
-`quant_ex` 是一个基于 **qlib + Alpha158** 的 A 股低频量化选股研究框架，用于训练选股模型、做 walk-forward 验证、生成每日候选股和调仓动作，并沉淀可复用的研究配置。
+`quant_ex` 是一个基于 **qlib** 的 A 股低频量化选股研究框架，用于训练选股模型、做 walk-forward 验证、生成每日候选股和调仓动作，并沉淀可复用的研究配置。
 
 项目定位偏向 **研究与辅助决策**，不是自动实盘交易系统。
 
 当前核心能力：
 
-- qlib Alpha158 数据集构建与模型训练
+- qlib数据集构建与模型训练
 - LightGBM / XGBoost / Ridge / Lasso / MLP 多模型训练
 - LightGBM bootstrap ensemble / bagging
 - TopkDropout 策略回测、参数网格搜索、多 seed 稳健性评估
