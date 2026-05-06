@@ -72,6 +72,11 @@ class TrainRequest(BaseModel):
     fit_start: Optional[str] = None
     fit_end: Optional[str] = None
     qlib_native: bool = False
+    with_sector: bool = False
+    no_extra_factors: bool = False
+    skip_factor_pipeline: bool = False
+    bagging_fraction: Optional[float] = None
+    ensemble_seeds: Optional[list[int]] = None
 
 
 @router.post("/train")
@@ -99,6 +104,16 @@ async def start_training(req: TrainRequest):
             kwargs["fit_start"] = req.fit_start
         if req.fit_end:
             kwargs["fit_end"] = req.fit_end
+        if req.with_sector:
+            kwargs["with_sector"] = req.with_sector
+        if req.no_extra_factors:
+            kwargs["no_extra_factors"] = req.no_extra_factors
+        if req.skip_factor_pipeline:
+            kwargs["skip_factor_pipeline"] = req.skip_factor_pipeline
+        if req.bagging_fraction is not None:
+            kwargs["bagging_fraction"] = req.bagging_fraction
+        if req.ensemble_seeds is not None:
+            kwargs["ensemble_seeds"] = req.ensemble_seeds
 
         model, dataset, recorder_id = trainer.train(
             model_name=req.model,
