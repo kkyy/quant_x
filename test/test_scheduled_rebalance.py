@@ -69,6 +69,7 @@ def test_resolve_cfg_start_date_previous_trade_date_alias():
 
 
 def test_convert_snapshot_to_actual_prices_uses_target_value(monkeypatch):
+    """Legacy path (account_value=0): convert qlib adjusted value to actual shares."""
     snapshot = {
         "SH600001": {"shares": 500.0, "price": 40.0, "value": 20000.0},
     }
@@ -83,3 +84,49 @@ def test_convert_snapshot_to_actual_prices_uses_target_value(monkeypatch):
     assert converted["SH600001"]["price"] == 12.0
     assert converted["SH600001"]["value"] == 19200.0
     assert converted["SH600001"]["raw_target_value"] == 20000.0
+
+
+def test_convert_snapshot_to_actual_prices_equal_weight(monkeypatch):
+    """When account_value is provided, allocate equal-weight using actual prices."""
+    snapshot = {
+        "SH600001": {"shares": 500.0, "price": 40.0, "value": 20000.0},
+        "SH600002": {"shares": 300.0, "price": 50.0, "value": 15000.0},
+    }
+    monkeypatch.setattr(
+        "quant_ex.run_scheduled_rebalance._load_actual_close",
+        lambda instrument, trade_date: 12.0,
+    )
+
+    converted = _convert_snapshot_to_actual_prices(
+        snapshot, "2026-04-29",
+        account_value=100000, max_position_pct=0.0,
+    )
+
+    # 2 stocks, equal weight = 0.5 each
+    # shares = int(100000 * 0.5 / 12.0 / 100) * 100 = 4100
+    assert converted["SH600001"]["shares"] == 4100.0
+    assert converted["SH600002"]["shares"] == 4100.0
+    assert converted["SH600001"]["price"] == 12.0
+    assert "raw_target_value" not in converted["SH600001"]
+
+
+def test_convert_snapshot_to_actual_prices_respects_max_pct(monkeypatch):
+    """When max_position_pct caps the weight per stock."""
+    snapshot = {
+        "SH600001": {"shares": 500.0, "price": 40.0, "value": 20000.0},
+        "SH600002": {"shares": 300.0, "price": 50.0, "value": 15000.0},
+    }
+    monkeypatch.setattr(
+        "quant_ex.run_scheduled_rebalance._load_actual_close",
+        lambda instrument, trade_date: 12.0,
+    )
+
+    converted = _convert_snapshot_to_actual_prices(
+        snapshot, "2026-04-29",
+        account_value=100000, max_position_pct=0.2,
+    )
+
+    # min(1/2, 0.2) = 0.2, so 100000 * 0.2 = 20000 per stock
+    # shares = int(20000 / 12.0 / 100) * 100 = 1600
+    assert converted["SH600001"]["shares"] == 1600.0
+    assert converted["SH600002"]["shares"] == 1600.0

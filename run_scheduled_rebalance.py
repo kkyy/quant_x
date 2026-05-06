@@ -357,8 +357,39 @@ def _convert_snapshot_to_actual_prices(
     snapshot: Dict[str, Dict[str, float]],
     trade_date: str,
     lot_size: int = 100,
+    account_value: float = 0,
+    max_position_pct: float = 0.0,
 ) -> Dict[str, Dict[str, float]]:
+    """Convert qlib position snapshot to actual-price-based shares.
+
+    When *account_value* > 0, allocates equal-weight across all instruments
+    in *snapshot* using actual (unadjusted) closing prices — this avoids the
+    systematic under-allocation caused by dividing qlib's adjusted-price
+    market value by the higher unadjusted price.
+
+    When *account_value* is 0 (legacy path), falls back to the old behaviour
+    of converting qlib's ``value`` field with actual prices.
+    """
     converted: Dict[str, Dict[str, float]] = {}
+
+    if account_value > 0 and snapshot:
+        n = len(snapshot)
+        weight = min(1.0 / n, max_position_pct) if max_position_pct > 0 else 1.0 / n
+        for inst in snapshot:
+            actual_price = _load_actual_close(inst, trade_date)
+            if actual_price is None or actual_price <= 0:
+                continue
+            shares = int(account_value * weight / actual_price / lot_size) * lot_size
+            if shares <= 0:
+                continue
+            converted[inst] = {
+                "shares": float(shares),
+                "price": actual_price,
+                "value": shares * actual_price,
+            }
+        return converted
+
+    # Legacy path: convert qlib adjusted-price value to actual-price shares
     for inst, info in snapshot.items():
         target_value = float(info.get("value", 0) or 0)
         actual_price = _load_actual_close(inst, trade_date)
@@ -523,14 +554,23 @@ def _run_real_rebalance(
     if not position_items:
         raise RuntimeError("回测没有返回 position 数据。")
     latest_dt, latest_obj = position_items[-1]
-    target = _convert_snapshot_to_actual_prices(_snapshot(latest_obj), trade_date)
+    acct = float(cfg.get("account", 0))
+    port_cfg = config.get("strategy", {}).get("portfolio", {})
+    max_pct = float(port_cfg.get("max_position_pct", 0))
+    target = _convert_snapshot_to_actual_prices(
+        _snapshot(latest_obj), trade_date,
+        account_value=acct, max_position_pct=max_pct,
+    )
     # 若用户传入了 --positions，用真实持仓做差分；否则回退到回测模拟的前一日持仓。
     if actual_positions is not None:
         logger.info("使用 --positions 实际持仓作为调仓差分基准（共 %d 只）。", len(actual_positions))
         previous = actual_positions
     else:
         prev_obj = position_items[-2][1] if len(position_items) > 1 else {}
-        previous = _convert_snapshot_to_actual_prices(_snapshot(prev_obj), trade_date)
+        previous = _convert_snapshot_to_actual_prices(
+            _snapshot(prev_obj), trade_date,
+            account_value=acct, max_position_pct=max_pct,
+        )
     actions = _diff_positions(previous, target)
     # hold_thresh 保护：若传入了 --positions 和 --position-date，过滤保护期内的卖出动作。
     if actual_positions is not None and trading_calendar:
