@@ -12,6 +12,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Rule**: Do not switch to external Python environments unless the user explicitly asks for it.
 - **qlib data**: `/Users/weidian/code/algorithms/investment_data/qlib_data/qlib_bin`
 - **Setup**: `pip install -r requirements.txt` or `pip install -e .[dev]` for dev tools
+- **Console scripts** (after `pip install -e .`): `qx-train`, `qx-daily`, `qx-backtest`, `qx-mine`
+- **Optional**: `torch` is only needed for `--model mlp` (neural network with MPS GPU support)
+- **VS Code**: `python.analysis.extraPaths` includes the parent directory (`..`) so `quant_ex` is importable both as a package and from the workspace root
 
 ## Commands
 
@@ -19,6 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Training
 python run_train.py --model lgbm --tag baseline
 python run_train.py --model lgbm --with-sector --tag sector_full
+python run_train.py --model lgbm --no-extra-factors --tag alpha158_only  # Alpha158 only, no custom factors
 python run_train.py --qlib-native                    # MLflow mode; outputs Recorder ID
 python run_train.py --list-registry                  # Show all registered models/factors
 
@@ -33,6 +37,7 @@ python run_walk_forward_validation.py \
   --train-universes csi300,csi800,csi1000 \
   --eval-market csi300 \
   --topk 5,15,20 --n-drop 1,3 --hold-thresh 5,8,10
+python run_walk_forward_validation.py --workers 3 --grid-workers 1  # parallel fold execution
 python run_walk_forward_validation.py --folds-config config/walk_forward_folds.yaml  # custom folds
 python run_walk_forward_validation.py \
   --robust-weights '{"mean_sharpe":1.0,"sharpe_std":-0.3,"min_sharpe":0.5,"positive_sharpe_folds":0.05}'
@@ -76,7 +81,9 @@ python run_update_qlib_data.py --skip-dolt-pull      # skip dolt sync
 python run_update_qlib_data.py --supplement-source akshare   # fill gaps with akshare
 
 # Tests
-python -m pytest test/test_universe_filter.py test/test_trainer.py test/test_data_sources.py
+python -m pytest test/                                           # run all tests
+python -m pytest test/test_universe_filter.py                   # single test file
+python -m pytest test/test_trainer.py::test_name -k "pattern"   # single test / pattern
 
 # Web Dashboard
 python web/run_web.py                        # Production: serves API + static frontend on :8000
@@ -99,6 +106,8 @@ Data Layer      DataLoader (qlib D.features) -> UniverseFilter (liquidity filter
                 | data/sources/: GapFiller (akshare / eastmoney) bridges Dolt gaps
 Fetcher Layer   data/fetchers/: 14 domain-specific fetchers (BaseDataFetcher subclasses)
                 Each fetcher caches to cache/<type>/*.csv with configurable TTL.
+                Cache TTL by domain: margin/pledge/insider/repurchase=1d, analyst=3d,
+                financial/visit=7d, balance_sheet/dividend/earnings_guidance/institutional/shareholder=30d, valuation=1d
                 Entry point: run_fetch_data.py --type <type>
                 Fetchers are paired 1:1 with factor modules (see below).
 Feature Layer   Alpha158 (qlib native) + FactorPipeline [technical, sector, mined, regime,
@@ -111,6 +120,7 @@ Model Layer     ModelTrainer -> qlib-native path (MLflow .recorder) or custom pa
                 LGBMAlphaModel supports bootstrap bagging (bagging_fraction param)
 Backtest Layer  BacktestEngine (qlib TopkDropoutStrategy) -> GridSearchBacktest -> AutoOptimizer (Claude)
                 backtest/metrics.py: benchmark excess return, IR, turnover
+                Output metrics: annual_return, sharpe, max_drawdown, calmar, win_rate, ic, icir, rank_ic, rank_icir
                 backtest/attribution.py: Brinson sector attribution
                 backtest/signal_diagnostics.py: IC decay, rolling IC monitor
 Signal Layer    SignalGenerator (price_data reuse, suspended filter)
@@ -358,3 +368,5 @@ Create an override YAML (e.g. `config/daily_csi1000.yaml`) and pass via `--confi
 - For crawler changes: keep the main train/backtest path working offline (cache-based). Real network requests require user consent.
 - Operations involving network, downloads, external APIs, real push notifications, or real funds: confirm user intent first.
 - Check files for uncommitted changes before editing to avoid overwriting user work.
+- Be conservative with notebooks, model files, cached data, and backtest results — explain before modifying or cleaning.
+- Do not delete or roll back user changes unless explicitly asked.
