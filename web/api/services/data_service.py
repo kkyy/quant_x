@@ -72,14 +72,14 @@ def get_stock_quotes(
         "data":   [{"date": "2024-01-02", "open": 1650.0, ...}, ...]
     }
     """
-    from quant_ex.data.utils import code_to_qlib_instrument, load_stock_names, normalize_qlib_instrument
+    from quant_ex.data.utils import load_stock_names, normalize_qlib_instrument
 
     qlib_sym = normalize_qlib_instrument(symbol)
     cache_key = f"quotes:{qlib_sym}:{start}:{end}"
 
     def _load() -> Dict[str, Any]:
         loader = _qlib_loader()
-        fields = fields or [
+        _fields = fields or [
             "$open", "$high", "$low", "$close",
             "$factor", "$adjclose", "$volume", "$change", "$amount",
         ]
@@ -88,7 +88,7 @@ def get_stock_quotes(
             instruments=[qlib_sym],
             start_time=start,
             end_time=end,
-            fields=fields,
+            fields=_fields,
         )
 
         # xs the instrument level when data is MultiIndex
@@ -128,7 +128,7 @@ def search_stocks(q: str, limit: int = 10) -> List[Dict[str, str]]:
     -------
     [{"symbol": "SH600519", "name": "贵州茅台", "exchange": "SH"}, ...]
     """
-    from quant_ex.data.utils import code_to_qlib_instrument, load_stock_names
+    from quant_ex.data.utils import load_stock_names
 
     cache_key = f"search:{q.lower()}:{limit}"
 
