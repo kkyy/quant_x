@@ -1,0 +1,63 @@
+# Adaptive drawdown-gated SVS overlay: apply stock-vs-sector filter only
+# when the market is NOT in significant drawdown.  When drawdown exceeds
+# the threshold, the baseline signal passes through unfiltered, avoiding
+# the leverage-amplification problem identified in WFV (2021-2022).
+#
+# Use with:
+#   python run_backtest.py --config config/csi1000_adaptive_overlay.yaml \
+#     --model-path models/lgbm_universe-csi1000_20260428_155547.pkl
+#
+# DESIGN RATIONALE:
+#   WFV showed SVS is "leverage not alpha" — great in trending markets
+#   (2020, 2024-2026) but near-zero or negative in drawdown periods
+#   (2021-2022).  This config gates SVS by market drawdown: when the
+#   equal-weight index is more than drawdown_threshold below its
+#   drawdown_window rolling high, SVS is bypassed for that date.
+
+market:
+  name: "csi300"
+  benchmark: "SH000300"
+
+strategy:
+  topk_dropout:
+    topk: 10
+    n_drop: 5
+    hold_thresh: 8
+  portfolio:
+    max_position_pct: 0.12
+    concentration_hard_limit: 0.22
+  universe_filter:
+    exclude_kcb: true
+    exclude_list: []
+    min_price: 3
+    exclude_st: true
+    exclude_suspended: true
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    industry_neutralize: false
+    stock_vs_sector_filter:
+      enabled: true
+      window: 20
+      keep_top_pct: 0.5
+      mode: "hard_filter"
+      # ── Drawdown gating ──
+      # When market drawdown exceeds this threshold (more negative),
+      # SVS filter is bypassed for that date and baseline signal passes through.
+      # Value is negative; -0.10 means "disable SVS when index >10% below rolling high"
+      drawdown_threshold: -0.10
+      # Rolling window (trading days) for computing the high-water mark
+      drawdown_window: 120
+
+daily_rebalance:
+  market: "csi300"
+  topk: 10
+  n_drop: 5
+  hold_thresh: 8
+  account: 150000
+  notify_channel: "bark"
+  start_date: "previous_trade_date"
+  model_path: "models/lgbm_universe-csi1000_20260428_155547.pkl"

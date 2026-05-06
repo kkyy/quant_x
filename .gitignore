@@ -78,6 +78,7 @@ models_saved/
 *.pt
 *.pth
 models/*_meta.json
+models/*_feature_importance.json
 
 # Signal output files
 signals/*.txt
