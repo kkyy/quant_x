@@ -12,14 +12,16 @@
 - TopkDropout 策略回测、网格搜索、多 seed 稳健性评估
 - Walk-forward 时间交叉验证（支持自定义折叠 YAML、t 检验显著性）
 - 每日信号生成、目标持仓与买卖差分
+- 定时调仓：收盘后 qlib 数据更新、固定起点回放、真实持仓差分、缓存提醒与 Bark 推送
 - 集中度风险检查、流动性过滤
-- 信号后处理：行业中性化、市值中性化
+- 信号后处理：行业中性化、市值中性化、个股相对行业强度（stock-vs-sector）过滤
+- 市场状态切换：`RegimeStrategySwitch` 动态覆盖 topk/n_drop/hold_thresh，并可开关 overlay
 - Brinson 绩效归因（板块级 allocation/selection/interaction）
 - IC 衰减分析、滚动 IC 监控
 - 多渠道通知推送
 - 东方财富数据 SDK 与板块/成分股缓存
 - Claude API 驱动的回测参数自动优化
-- Web Dashboard：React + FastAPI 本地可视化面板（数据管理、模型训练、回测、信号、因子、配置），支持中英文切换
+- Web Dashboard：React + FastAPI 本地可视化面板（数据管理、模型训练、回测图表、信号/调仓、因子、配置、任务 SSE），支持中英文切换
 
 ## 运行环境
 
@@ -79,6 +81,11 @@ python run_walk_forward_validation.py \
 ```bash
 python run_daily.py --model-path models/lgbm_*.pkl --dry-run
 python run_daily.py --account 500000 --positions SH600000:500,SZ000001:300
+
+# 收盘后定时调仓/提醒（真实推送前优先 dry-run）
+./.venv/bin/python run_scheduled_rebalance.py --config config/daily_csi1000.yaml --dry-run
+./.venv/bin/python run_scheduled_rebalance.py --mock --dry-run
+./.venv/bin/python run_scheduled_rebalance.py --remind --dry-run
 ```
 
 因子挖掘：
@@ -99,10 +106,14 @@ Web Dashboard：
 ```bash
 # 生产模式（单一进程，同时提供 API + 静态前端）
 python web/run_web.py                    # http://localhost:8000
+bash command/util/web.sh                 # 构建前端后启动生产服务
+bash command/util/web.sh --no-build      # 跳过前端构建，直接启动生产服务
+bash command/util/web.sh --build-only    # 只构建前端，不启动服务
 
 # 开发模式（两个终端）
 python web/run_web.py                    # 后端 :8000
 cd web/frontend && npm run dev           # 前端 :5173（自动代理 /api → :8000）
+bash command/util/web.sh --dev           # 一键启动后端 :8000 + Vite :5173
 
 # 构建前端
 cd web/frontend && npm run build         # 输出到 web/frontend/dist/
@@ -111,16 +122,18 @@ cd web/frontend && npm run build         # 输出到 web/frontend/dist/
 ## 目录职责
 
 - `config/`：配置文件。`base.yaml` 放 qlib 路径、市场、训练区间、策略、回测；`model.yaml` 放模型和因子配置；`walk_forward_folds.yaml.example` 是自定义折叠示例；`notify.yaml.example` 是通知配置模板。
+- `command/`：常用命令脚本。`command/daily/` 放每日/定时调仓调用，`command/backtest/` 放研究回测入口，`command/data/` 放数据更新入口，`command/util/web.sh` 是 Web Dashboard 推荐启动脚本。
 - `docs/strategy_log/`：长期保留的策略迭代表格日志。`strategy_iteration_log.csv` 记录策略配置路径、迭代日期、模型、参数、效果指标、结论和下一步对照实验方向；`system_iteration_log.csv` 记录系统级迭代周期（变更内容、基线范围、前后最佳 Sharpe、诊断评分、决策、收敛状态），通过 `strategy_iteration_ids` 列与策略日志关联。这是后续策略比较与 ablation 决策的首选入口。
 - `data/`：qlib 数据加载、股票池过滤（含流动性过滤）、行业数据提供；`utils.py` 是统一代码转换+缓存模块。`data/fetchers/`：15 个领域特定 fetcher（BaseDataFetcher 子类），各自缓存到 `cache/<domain>/`，TTL 可配置；入口为 `run_fetch_data.py --type <type>`。
 - `features/`：因子基类、注册表、技术因子、行业因子、挖掘因子（含 qlib init 保护）、市场状态因子；12 个 akshare 数据驱动因子（pledge, margin, insider, analyst, shareholder, dividend, valuation, balance_sheet, earnings_guidance, institutional, repurchase, visit）、CSV 自定义因子；`library/` 含 FactorScreener / FactorCleaner / FactorEvaluator。
 - `models/`：模型基类、注册表、训练器及各模型实现；训练产物含 `_meta.json` 和 `_feature_importance.json` sidecar。
 - `backtest/`：回测引擎、指标（含基准超额/IR/换手率）、网格搜索、信号诊断（IC 衰减/滚动 IC）、Brinson 归因。
-- `signals/`：信号生成（含停牌过滤/price_data 复用）、后处理（含市值中性化）。
+- `signals/`：信号生成（含停牌过滤/price_data 复用）、后处理（含市值中性化、stock-vs-sector 过滤）、定时调仓缓存（`signals/daily_rebalance_cache/`）。
+- `strategy/`：策略级开关与参数逻辑。`regime_switch.py` 负责市场状态识别后的 topk/n_drop/hold_thresh 覆盖与 overlay gating。
 - `notify/`：通知推送渠道。
 - `crawler/`：东方财富 API SDK，应保持独立，不引入 qlib 依赖。
 - `agent/`：AI 参数优化器（Claude API）。
-- `web/`：Web Dashboard（FastAPI + React）。`web/api/` 是后端路由与服务层；`web/frontend/` 是 React 前端（Vite + TypeScript + Tailwind + react-i18next 中英文切换）。入口 `web/run_web.py`。
+- `web/`：Web Dashboard（FastAPI + React）。`web/api/` 是后端路由与服务层；`web/api/services/task_manager.py` 负责后台任务与 SSE；`web/api/services/chart_service.py` 负责回测 CSV 的图表数据解析；`web/frontend/` 是 React 前端（Vite + TypeScript + Tailwind + react-i18next 中英文切换）。入口 `web/run_web.py`。
 - `test/`：pytest 测试。
 
 ## 架构与数据流
@@ -145,8 +158,10 @@ DataLoader(qlib D.features / DatasetH)
   → ModelTrainer (qlib-native 或 custom, 支持 bootstrap bagging)
   → BacktestEngine / GridSearchBacktest → AutoOptimizer (Claude)
   → SignalGenerator (price_data 复用, 停牌过滤)
-      → postprocess (industry_neutralize / size_neutralize)
+      → RegimeStrategySwitch (可选，覆盖策略参数 / overlay_enabled)
+      → postprocess (industry_neutralize / size_neutralize / stock_vs_sector_filter)
       → 集中度风险检查
+  → run_scheduled_rebalance (可选：固定起点回放、真实持仓差分、缓存提醒)
   → NotificationPusher
   → (可选) brinson_attribution
 ```
@@ -192,8 +207,14 @@ kept = pipeline.compute_with_screening(price_data, forward_returns=label)
 | 市场状态感知因子 | `features/regime_features.py` |
 | 因子质量过滤 | `features/library/screener.py` |
 | 市值中性化 | `signals/postprocess.neutralize_by_size()` |
+| 个股相对行业强度过滤 | `signals/postprocess` 中的 `stock_vs_sector_filter` |
 | 流动性过滤 | `data/universe.UniverseFilter` (`min_avg_volume`/`min_avg_amount`) |
 | 集中度风险检查 | `run_daily._check_concentration()` |
+| 市场状态参数切换 | `strategy/regime_switch.RegimeStrategySwitch` |
+| overlay 开关 | `strategy/regime_switch.apply_overlay_gating()` |
+| 定时调仓/缓存提醒 | `run_scheduled_rebalance.py` |
+| Web 后台任务/SSE | `web/api/services/task_manager.py` |
+| 回测图表数据解析 | `web/api/services/chart_service.py` |
 | Brinson 绩效归因 | `backtest/attribution.brinson_attribution()` |
 | IC 衰减分析 | `backtest/signal_diagnostics.compute_ic_decay()` |
 | 滚动 IC 监控 | `backtest/signal_diagnostics.compute_rolling_ic()` |
@@ -232,6 +253,8 @@ kept = pipeline.compute_with_screening(price_data, forward_returns=label)
 - 必须同步更新 `docs/strategy_log/strategy_iteration_log.csv`，记录：配置路径、迭代日期、模型路径、训练/评估股票池、核心参数、关键效果指标、结论、下一步 ablation 方向。
 - 该 CSV 按时间追加维护，用于后续代理快速选择比较对象和实验优先级。
 - 临时调试、不准备保留的参数试跑不要写入；只有“值得后续比较或复用”的策略版本才入表。
+- `config/strategy_candidates.yaml` 不是运行时自动加载配置，而是“当前候选结论索引”。后续研究先读它和两个 strategy log，再决定是否新增实验。
+- 近期结论（2026-05）：`csi1000_balanced` / adaptive baseline 是更稳的对照臂；SVS overlay（stock-vs-sector）更像放大器而非稳定 alpha，强窗口可用作参考或激进候选，但不要默认提升为系统化部署线。涉及 overlay 变体时必须写清 baseline、是否启用 SVS、`keep_top_pct`、`max_position_pct`、slippage/成本假设和 WFV 证据。
 
 ### 生成产物（默认不应提交）
 
@@ -252,6 +275,20 @@ kept = pipeline.compute_with_screening(price_data, forward_returns=label)
 ./.venv/bin/python run_train.py --list-registry
 ```
 
+## 定时调仓约定
+
+- `run_scheduled_rebalance.py` 是收盘后调仓主入口：真实模式会先更新 qlib 数据（除非 `--skip-update`），再从 `daily_rebalance.start_date` 固定起点重放 TopkDropout，并生成下一交易日买卖差分。
+- `daily_rebalance.start_date` 必须早于信号日。TopkDropout 在回测第一天不会立刻开仓，因此不要把 start date 设置成 `today`，除非明确知道这是用于空信号/测试。
+- 支持动态起点别名：`signal_date`/`trade_date`/`today` 与 `previous_trade_date`/`previous_trading_day`/`yesterday`。用于配置时要确认交易日历是否覆盖目标日期。
+- 真实持仓差分用 `--positions SH600489:900,SH600900:900` 覆盖回测模拟持仓；`--position-date` 用于计算 `hold_thresh` 保护期，未传时默认上一交易日。
+- `_apply_hold_protection()` 在保护期内保留实际持仓手数，并让这些持仓占用 topk 名额；剩余名额才允许新买入，避免“保留旧仓 + 买满新仓”导致超配。
+- `_convert_snapshot_to_actual_prices()` 使用 `account_value` 等权目标和真实未复权收盘价换算股数，避免 qlib 复权价格造成系统性低配。单股权重为 `min(1 / n, strategy.portfolio.max_position_pct)`；保护期内实际持仓手数优先，等权目标会在保护期结束后生效。
+- `--min-action-value` 用于过滤金额很小的调仓动作，避免价格微变造成无意义的 100 股噪音交易。
+- 调仓信号缓存默认写入 `signals/daily_rebalance_cache/`，包含 `rebalance_<trade_date>.json` 与 `latest.json`。`--remind` 使用缓存发送开盘/收盘提醒；缺失或 stale 时默认可重建，`--no-reminder-rebuild` 可关闭。
+- overlay 配置可设置 `overlay_monitor`，当累计回撤超过阈值时在调仓报告中提示切回 baseline。不要把该提示当自动切仓逻辑，它只是风险提示。
+- 真实 Bark/通知推送、完整数据更新、完整回放都可能有外部影响或耗时；默认先 `--dry-run`，用户明确要求后再真实发送。
+- 相关验证优先运行：`./.venv/bin/python -m pytest test/test_scheduled_rebalance.py`。
+
 ## 代码风格
 
 - 默认按项目 `.venv` 的 Python 3.11 运行与验证；若涉及版本兼容性讨论或修改，应明确说明影响范围。
@@ -267,22 +304,32 @@ kept = pipeline.compute_with_screening(price_data, forward_returns=label)
 - `web/api/routers/` 中所有项目模块导入使用 `from quant_ex.xxx import yyy`（非裸 `from models.xxx`），因为 `app.py` 的 `sys.path` 同时包含项目根目录和其父目录以支持 quant_ex 包内的相对导入。
 - 新增 API 端点在对应 router 文件中添加，按 RESTful 风格组织。
 - 后台任务使用 `TaskManager.start_sync_task()` 包装阻塞函数，前端通过 SSE 流获取进度。
+- SSE 流统一走 `/api/system/tasks/{task_id}/stream`；任务状态与取消能力由 `web/api/services/task_manager.py` 管理。新增耗时接口时返回 `{"task_id": ...}`，不要让 FastAPI request 阻塞完整训练/回测。
+- 回测图表接口使用 `web/api/services/chart_service.py` 解析 CSV：equity curve、metrics、drawdown、compare。新增图表优先扩展 service，不在 router 里堆解析逻辑。
+- 对文件名参数必须使用现有 `_safe_path()` / `_safe_model_path()` 风格防路径穿越；不要把用户输入直接拼成任意路径。
+- 通过 Web 启动 CLI 时优先构造 argv 列表并使用 `subprocess.run(..., cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=...)`；错误信息截断返回，避免把超长日志塞进 API 响应。
 - 路径常量定义在 `web/api/deps.py`（MODELS_DIR、CACHE_DIR 等）。
+- 主要 API 分组：`/api/system`（健康、日志、任务/SSE）、`/api/data`（缓存/数据抓取/股票查询）、`/api/models`（模型列表、训练、注册表、重要性）、`/api/backtest`（grid/WFV/结果/图表/compare）、`/api/signals`（生成、history、regime、rebalance、notify-test）、`/api/factors`（库、评估、挖掘）、`/api/config`（YAML 与 daily presets）。
 
 ### 前端（React 19 + TypeScript）
 
 - 页面组件放在 `web/frontend/src/pages/`，每个页面对应一个 tabbed 布局。
 - API 调用统一通过 `src/api/client.ts` 的 `get`/`post`/`put`/`del` 函数。
 - SSE 流使用 `src/hooks/useSSE.ts` hook。
+- 长任务 UI 使用共享 `TaskStatus` 组件展示 SSE 事件、完成状态和错误；避免新页面重新实现轮询。
+- 图表优先使用已有 `EChartsWrapper` 与 chart API 数据结构，保持 DataExplorer/Backtest/Compare 的交互一致。
 - 国际化使用 `react-i18next`，翻译文件在 `src/i18n/`（en.json / zh.json），切换组件为 `LanguageToggle`。
 - 共享 UI 组件放在 `src/components/`。
 - 使用 Tailwind CSS 类，不引入额外 CSS 框架。
+- 前端文本改动必须同步更新 `en.json` 与 `zh.json`。不要留下“placeholder”文案，除非功能确实还未接通。
+- Web 调仓页已经接到 `POST /api/signals/rebalance`，通知测试页接到 `POST /api/signals/notify-test`；不要再把它们当纯占位页处理。
 
 ### 验证
 
 - 后端验证：`.venv/bin/python -c "from web.api.app import app; print('OK')"`
 - API 端点测试：使用 `fastapi.testclient.TestClient`
 - 前端验证：`cd web/frontend && npm run build`
+- 推荐启动脚本验证：`bash command/util/web.sh --build-only` 或 `bash command/util/web.sh --no-build`
 
 ## 东方财富 Crawler
 

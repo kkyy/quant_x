@@ -87,6 +87,9 @@ python -m pytest test/test_trainer.py::test_name -k "pattern"   # single test / 
 
 # Web Dashboard
 python web/run_web.py                        # Production: serves API + static frontend on :8000
+bash command/util/web.sh --dev               # Dev mode: backend :8000 + Vite :5173
+bash command/util/web.sh --build-only        # Build frontend only, no server
+bash command/util/web.sh --no-build          # Production without rebuilding frontend
 cd web/frontend && npm run dev               # Dev: Vite dev server on :5173 (proxies /api → :8000)
 cd web/frontend && npm run build             # Build frontend to web/frontend/dist/
 
@@ -104,7 +107,7 @@ Data Layer      DataLoader (qlib D.features) -> UniverseFilter (liquidity filter
                 | data/utils.py: unified code_to_qlib_instrument() + cached load_stock_names()
                 | qlib_update/: Dolt -> SQL -> CSV -> normalize -> dump_bin
                 | data/sources/: GapFiller (akshare / eastmoney) bridges Dolt gaps
-Fetcher Layer   data/fetchers/: 14 domain-specific fetchers (BaseDataFetcher subclasses)
+Fetcher Layer   data/fetchers/: 15 domain-specific fetchers (BaseDataFetcher subclasses)
                 Each fetcher caches to cache/<type>/*.csv with configurable TTL.
                 Cache TTL by domain: margin/pledge/insider/repurchase=1d, analyst=3d,
                 financial/visit=7d, balance_sheet/dividend/earnings_guidance/institutional/shareholder=30d, valuation=1d
@@ -353,6 +356,8 @@ Create an override YAML (e.g. `config/daily_csi1000.yaml`) and pass via `--confi
 - Temporary debug runs should stay in `optimization_results/` and should not be added unless they change the long-term decision surface.
 
 ## Scheduled Rebalance Notes
+
+**Position sizing**: `_convert_snapshot_to_actual_prices` uses `account_value`-based equal-weight allocation with actual (unadjusted) closing prices, bypassing qlib's adjusted-price internal values. The weight per stock is `min(1/n, max_position_pct)`. During `hold_thresh` protection, `_apply_hold_protection` overrides target share counts with actual `--positions` values, so position sizing changes only take effect after the hold period expires.
 
 **`start_date` must be earlier than today.** `TopkDropoutStrategy` does not open positions on the very first day of the backtest. Set `start_date` to at least a few trading days before the signal date.
 
