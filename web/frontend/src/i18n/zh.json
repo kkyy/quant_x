@@ -1,14 +1,14 @@
 {
   "nav": {
-    "dashboard": "Dashboard",
-    "data": "数据管理",
+    "subtitle": "量化研究平台",
+    "overview": "总览",
+    "dataExplorer": "数据探索",
+    "research": "因子研究",
     "models": "模型",
     "backtest": "回测",
     "signals": "信号",
-    "factors": "因子",
     "config": "配置",
-    "system": "系统",
-    "subtitle": "量化选股系统"
+    "system": "系统"
   },
   "common": {
     "loading": "加载中...",

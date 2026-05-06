@@ -1,14 +1,14 @@
 {
   "nav": {
-    "dashboard": "Dashboard",
-    "data": "Data",
+    "subtitle": "Quant Research Platform",
+    "overview": "Overview",
+    "dataExplorer": "Data Explorer",
+    "research": "Research",
     "models": "Models",
     "backtest": "Backtest",
     "signals": "Signals",
-    "factors": "Factors",
     "config": "Config",
-    "system": "System",
-    "subtitle": "Quant Stock Selection"
+    "system": "System"
   },
   "common": {
     "loading": "Loading...",

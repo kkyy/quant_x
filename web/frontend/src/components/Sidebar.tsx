@@ -1,16 +1,26 @@
 import { NavLink } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { LanguageToggle } from "./LanguageToggle";
+import {
+  LayoutDashboard,
+  Database,
+  FlaskConical,
+  LineChart,
+  Radio,
+  Brain,
+  Settings,
+  Terminal,
+} from "lucide-react";
 
 const NAV_ITEMS = [
-  { to: "/",          icon: "◉", key: "dashboard" },
-  { to: "/data",      icon: "◈", key: "data" },
-  { to: "/models",    icon: "◆", key: "models" },
-  { to: "/backtest",  icon: "◇", key: "backtest" },
-  { to: "/signals",   icon: "▸", key: "signals" },
-  { to: "/factors",   icon: "⋄", key: "factors" },
-  { to: "/config",    icon: "⚙", key: "config" },
-  { to: "/system",    icon: "⊙", key: "system" },
+  { icon: LayoutDashboard, key: "overview", to: "/" },
+  { icon: Database, key: "dataExplorer", to: "/data-explorer" },
+  { icon: FlaskConical, key: "research", to: "/research" },
+  { icon: Brain, key: "models", to: "/models" },
+  { icon: LineChart, key: "backtest", to: "/backtest" },
+  { icon: Radio, key: "signals", to: "/signals" },
+  { icon: Settings, key: "config", to: "/config" },
+  { icon: Terminal, key: "system", to: "/system" },
 ] as const;
 
 export function Sidebar() {
@@ -36,7 +46,7 @@ export function Sidebar() {
               }`
             }
           >
-            <span className="text-base leading-none">{item.icon}</span>
+            <item.icon size={16} />
             <span>{t(`nav.${item.key}`)}</span>
           </NavLink>
         ))}

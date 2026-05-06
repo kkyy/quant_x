@@ -1,11 +1,11 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Layout } from "./components/Layout";
-import { DashboardPage } from "./pages/DashboardPage";
-import { DataPage } from "./pages/DataPage";
+import { OverviewPage } from "./pages/OverviewPage";
+import { DataExplorerPage } from "./pages/DataExplorerPage";
+import { ResearchPage } from "./pages/ResearchPage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { BacktestPage } from "./pages/BacktestPage";
 import { SignalsPage } from "./pages/SignalsPage";
-import { FactorsPage } from "./pages/FactorsPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { SystemPage } from "./pages/SystemPage";
 
@@ -14,14 +14,14 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<DashboardPage />} />
-          <Route path="data" element={<DataPage />} />
-          <Route path="models" element={<ModelsPage />} />
-          <Route path="backtest" element={<BacktestPage />} />
-          <Route path="signals" element={<SignalsPage />} />
-          <Route path="factors" element={<FactorsPage />} />
-          <Route path="config" element={<ConfigPage />} />
-          <Route path="system" element={<SystemPage />} />
+          <Route index element={<OverviewPage />} />
+          <Route path="/data-explorer" element={<DataExplorerPage />} />
+          <Route path="/research" element={<ResearchPage />} />
+          <Route path="/models" element={<ModelsPage />} />
+          <Route path="/backtest" element={<BacktestPage />} />
+          <Route path="/signals" element={<SignalsPage />} />
+          <Route path="/config" element={<ConfigPage />} />
+          <Route path="/system" element={<SystemPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
