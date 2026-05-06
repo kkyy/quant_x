@@ -131,3 +131,107 @@ async def stock_lookup(symbol: str):
                     })
         result.append({"symbol": sym, "name": name, "cache_files": cache_files})
     return {"symbol": symbol, "matches": result}
+
+
+@router.get("/stock/search")
+async def stock_search(q: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=50)):
+    from web.api.services.data_service import search_stocks
+    return search_stocks(q, limit)
+
+
+@router.get("/stock/{symbol}/quotes")
+async def stock_quotes(
+    symbol: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    fields: Optional[str] = None,
+):
+    from web.api.services.data_service import get_stock_quotes
+    field_list = fields.split(",") if fields else None
+    return get_stock_quotes(symbol, start or "2020-01-01", end, field_list)
+
+
+@router.get("/sectors")
+async def list_sectors():
+    sector_stocks_path = CACHE_DIR / "sector_stocks.json"
+    if not sector_stocks_path.exists():
+        return []
+    with open(sector_stocks_path) as f:
+        data = json.load(f)
+    results = []
+    for sid, stocks in data.items():
+        results.append({"sector_id": sid, "sector_name": sid, "stock_count": len(stocks)})
+    return results
+
+
+@router.get("/sectors/rotation")
+async def sector_rotation(windows: str = Query("1,5,20")):
+    return []
+
+
+@router.get("/sectors/{sector_id}/stocks")
+async def sector_stocks(sector_id: str):
+    sector_stocks_path = CACHE_DIR / "sector_stocks.json"
+    if not sector_stocks_path.exists():
+        return {"sector_id": sector_id, "sector_name": sector_id, "stocks": []}
+    with open(sector_stocks_path) as f:
+        data = json.load(f)
+    stocks = data.get(sector_id, [])
+    from quant_ex.data.utils import load_stock_names
+    names = load_stock_names()
+    return {
+        "sector_id": sector_id,
+        "sector_name": sector_id,
+        "stocks": [{"symbol": s, "name": names.get(s, s)} for s in stocks],
+    }
+
+
+@router.get("/alt-data/{data_type}")
+async def alt_data(
+    data_type: str,
+    symbol: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+):
+    cache_dir = CACHE_DIR / data_type
+    if not cache_dir.exists():
+        return {"type": data_type, "columns": [], "rows": [], "total": 0, "has_more": False}
+
+    import pandas as pd
+    csv_files = sorted(cache_dir.glob("*.csv"))
+    if not csv_files:
+        return {"type": data_type, "columns": [], "rows": [], "total": 0, "has_more": False}
+
+    dfs = []
+    for f in csv_files:
+        try:
+            df = pd.read_csv(f)
+            if symbol and "symbol" in df.columns:
+                df = df[df["symbol"].str.contains(symbol, case=False, na=False)]
+            dfs.append(df)
+        except Exception:
+            continue
+
+    if not dfs:
+        return {"type": data_type, "columns": [], "rows": [], "total": 0, "has_more": False}
+
+    combined = pd.concat(dfs, ignore_index=True)
+
+    if start and "date" in combined.columns:
+        combined = combined[combined["date"] >= start]
+    if end and "date" in combined.columns:
+        combined = combined[combined["date"] <= end]
+
+    total = len(combined)
+    has_more = total > limit
+    combined = combined.head(limit)
+
+    columns = combined.columns.tolist()
+    rows = combined.to_dict(orient="records")
+    for row in rows:
+        for k, v in row.items():
+            if pd.isna(v):
+                row[k] = None
+
+    return {"type": data_type, "columns": columns, "rows": rows, "total": total, "has_more": has_more}
