@@ -1,9 +1,11 @@
+import subprocess
+import sys
 from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from web.api.deps import SIGNALS_DIR, get_config
+from web.api.deps import PROJECT_ROOT, SIGNALS_DIR, get_config
 
 router = APIRouter()
 
@@ -26,6 +28,11 @@ class GenerateSignalRequest(BaseModel):
     account: float = 1000000
     positions: Optional[str] = None
     dry_run: bool = True
+    universe: Optional[str] = None
+    refresh_cache: bool = False
+    config: Optional[str] = None
+    position_date: Optional[str] = None
+    min_action_value: Optional[float] = None
 
 
 @router.post("/generate")
@@ -52,6 +59,50 @@ async def generate_signal(req: GenerateSignalRequest):
 
     task_id = await tm.start_sync_task("signal_generate", _generate)
     return {"task_id": task_id}
+
+
+class RebalanceRequest(BaseModel):
+    mock: bool = True
+    dry_run: bool = True
+    config: Optional[str] = None
+
+
+@router.post("/rebalance")
+async def run_rebalance(req: RebalanceRequest):
+    from web.api.services.task_manager import get_task_manager
+
+    tm = get_task_manager()
+
+    def _run():
+        cmd = [sys.executable, str(PROJECT_ROOT / "run_scheduled_rebalance.py")]
+        if req.mock:
+            cmd.append("--mock")
+        if req.dry_run:
+            cmd.append("--dry-run")
+        if req.config:
+            cmd.extend(["--config", req.config])
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_ROOT))
+        return {"stdout": result.stdout[-2000:], "returncode": result.returncode}
+
+    task_id = await tm.start_sync_task("rebalance", _run)
+    return {"task_id": task_id}
+
+
+class NotifyTestRequest(BaseModel):
+    title: str
+    content: str
+    channel: Optional[str] = None
+
+
+@router.post("/notify-test")
+async def send_notify_test(req: NotifyTestRequest):
+    try:
+        from quant_ex.notify.pusher import NotificationPusher
+        pusher = NotificationPusher(get_config())
+        pusher.send(title=req.title, content=req.content)
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/history")
