@@ -1,7 +1,11 @@
 from typing import Optional
-from fastapi import APIRouter
+
+import pandas as pd
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
+
 from web.api.deps import get_config
+from web.api.services.factor_service import compute_factor_values, compute_ic_analysis
 from web.api.services.task_manager import get_task_manager
 
 router = APIRouter()
@@ -73,3 +77,43 @@ async def mine_factors(req: MineRequest):
         return {"status": "completed"}
     task_id = await tm.start_sync_task("factor_mine", _mine)
     return {"task_id": task_id}
+
+
+@router.get("/values")
+async def factor_values(
+    factors: str = Query(..., description="Comma-separated factor names"),
+    symbols: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+):
+    factor_list = [f.strip() for f in factors.split(",")]
+    symbol_list = [s.strip() for s in symbols.split(",")] if symbols else None
+    return compute_factor_values(factor_list, symbol_list, start, end)
+
+
+@router.get("/ic-analysis")
+async def ic_analysis(
+    factor: str = Query(...),
+    horizon: int = Query(5, ge=1, le=60),
+    window: int = Query(20, ge=5, le=120),
+):
+    return compute_ic_analysis(factor, horizon, window)
+
+
+@router.get("/heatmap")
+async def factor_heatmap(
+    factors: str = Query(...),
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+):
+    factor_list = [f.strip() for f in factors.split(",")]
+    result = compute_factor_values(factor_list, start=start, end=end)
+    if not result["data"]:
+        return {"factors": factor_list, "matrix": []}
+    df = pd.DataFrame(result["data"])
+    numeric_cols = [c for c in df.columns if c not in ("symbol", "date", "instrument")]
+    if len(numeric_cols) < 2:
+        return {"factors": factor_list, "matrix": [[1.0]]}
+    corr = df[numeric_cols].corr().fillna(0).values.tolist()
+    corr = [[round(float(v), 4) for v in row] for row in corr]
+    return {"factors": numeric_cols, "matrix": corr}
