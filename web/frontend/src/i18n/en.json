@@ -72,6 +72,15 @@
     "noCache": "No cache data",
     "latest": "Latest"
   },
+  "dataExplorer": {
+    "title": "Data Explorer",
+    "search": "Search Stock",
+    "dateRange": "Date Range",
+    "overlays": "Overlays",
+    "quickInfo": "Latest Quote",
+    "noData": "No data available",
+    "searchHint": "Enter stock code or name to search quotes"
+  },
   "data": {
     "title": "Data Management",
     "cacheTab": "Cache Status",
@@ -167,6 +176,19 @@
     "notifTitlePlaceholder": "Test Notification",
     "sendTest": "Send Test",
     "notifNote": "Send a test notification to verify notification channels."
+  },
+  "research": {
+    "title": "Research",
+    "selectFactor": "Select Factor",
+    "analyze": "Analyze",
+    "meanIC": "Mean IC",
+    "icir": "ICIR",
+    "icDecay": "IC Decay",
+    "rollingIC": "Rolling IC",
+    "startMining": "Start Mining",
+    "minIC": "Min IC",
+    "minICIR": "Min ICIR",
+    "topN": "Top N"
   },
   "factors": {
     "title": "Factors",

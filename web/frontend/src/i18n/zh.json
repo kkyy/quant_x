@@ -72,6 +72,15 @@
     "noCache": "暂无缓存数据",
     "latest": "最新"
   },
+  "dataExplorer": {
+    "title": "数据探索",
+    "search": "搜索股票",
+    "dateRange": "日期范围",
+    "overlays": "叠加指标",
+    "quickInfo": "最新行情",
+    "noData": "暂无数据",
+    "searchHint": "输入股票代码或名称搜索行情"
+  },
   "data": {
     "title": "数据管理",
     "cacheTab": "缓存状态",
@@ -167,6 +176,19 @@
     "notifTitlePlaceholder": "测试通知",
     "sendTest": "发送测试",
     "notifNote": "发送测试通知以验证通知渠道"
+  },
+  "research": {
+    "title": "因子研究",
+    "selectFactor": "选择因子",
+    "analyze": "分析",
+    "meanIC": "均值 IC",
+    "icir": "ICIR",
+    "icDecay": "IC 衰减",
+    "rollingIC": "滚动 IC",
+    "startMining": "开始挖掘",
+    "minIC": "最小 IC",
+    "minICIR": "最小 ICIR",
+    "topN": "Top N"
   },
   "factors": {
     "title": "因子",
