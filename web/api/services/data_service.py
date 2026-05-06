@@ -6,6 +6,8 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
 # ── Lazy qlib singleton ───────────────────────────────────────────────────────
@@ -23,8 +25,13 @@ def _qlib_loader() -> Any:
     from quant_ex.utils.config import load_config
 
     config = load_config()
-    _loader = DataLoader(config)
-    _loader.init_qlib()
+    loader = DataLoader(config)
+    try:
+        loader.init_qlib()
+    except Exception:
+        _loader = None
+        raise
+    _loader = loader
     logger.info("DataLoader singleton created and qlib initialised")
     return _loader
 
@@ -38,7 +45,7 @@ def _cached(key: str, ttl: float, factory: Callable[[], Any]) -> Any:
     """Dict-based TTL cache. Calls factory() only when the entry is missing or stale."""
     now = time.time()
     expiry, data = _ttl_cache.get(key, (0.0, None))
-    if now < expiry:
+    if now <= expiry:
         return data
 
     result = factory()
@@ -91,10 +98,17 @@ def get_stock_quotes(
             fields=_fields,
         )
 
+        if df is None or df.empty:
+            stock_names = load_stock_names()
+            return {"symbol": qlib_sym, "name": stock_names.get(qlib_sym, ""), "data": []}
+
         # xs the instrument level when data is MultiIndex
-        if isinstance(df.index, type(df.index)) and hasattr(df.index, "get_level_values"):
+        if isinstance(df.index, pd.MultiIndex):
             if "instrument" in df.index.names:
-                df = df.xs(qlib_sym, level="instrument")
+                try:
+                    df = df.xs(qlib_sym, level="instrument")
+                except KeyError:
+                    return {"symbol": qlib_sym, "name": "", "data": []}
 
         # Build stock name
         stock_names = load_stock_names()

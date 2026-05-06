@@ -6,7 +6,7 @@ import logging
 import uuid
 import traceback
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Awaitable, Callable, Optional
 
@@ -36,6 +36,7 @@ class TaskManager:
         self._tasks: dict[str, TaskState] = {}
         self._queues: dict[str, asyncio.Queue] = {}
         self._bg_tasks: dict[str, asyncio.Task] = {}
+        self._list_call_count = 0
 
     async def start_task(
         self,
@@ -88,7 +89,10 @@ class TaskManager:
             logger.exception(f"Task {task_id} failed")
             await self._queues[task_id].put({"type": "error", "data": {"message": str(exc), "traceback": traceback.format_exc()}})
         finally:
-            await self._queues[task_id].put(None)  # sentinel
+            try:
+                await self._queues[task_id].put(None)  # sentinel
+            except Exception:
+                pass
 
     def emit(self, task_id: str, event_type: str, data: dict):
         if task_id in self._queues:
@@ -109,14 +113,39 @@ class TaskManager:
         return self._tasks.get(task_id)
 
     def list_tasks(self) -> list[TaskState]:
+        self._list_call_count += 1
+        if self._list_call_count % 10 == 0:
+            self._cleanup()
         return list(self._tasks.values())
 
     async def cancel(self, task_id: str) -> bool:
         bg = self._bg_tasks.get(task_id)
         if bg and not bg.done():
             bg.cancel()
+            state = self._tasks.get(task_id)
+            if state:
+                state.status = TaskStatus.CANCELLED
             return True
         return False
+
+    def _cleanup(self, max_age_hours: int = 24):
+        """Remove DONE/FAILED/CANCELLED tasks older than max_age_hours."""
+        cutoff = datetime.now() - timedelta(hours=max_age_hours)
+        to_remove = []
+        for tid, state in self._tasks.items():
+            if state.status in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                try:
+                    created = datetime.fromisoformat(state.created_at)
+                    if created < cutoff:
+                        to_remove.append(tid)
+                except (ValueError, TypeError):
+                    pass
+        for tid in to_remove:
+            self._tasks.pop(tid, None)
+            self._queues.pop(tid, None)
+            self._bg_tasks.pop(tid, None)
+        if to_remove:
+            logger.info("Cleaned up %d old tasks", len(to_remove))
 
 
 _manager: Optional[TaskManager] = None

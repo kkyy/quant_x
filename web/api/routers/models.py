@@ -1,14 +1,25 @@
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from web.api.deps import MODELS_DIR, get_config
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _safe_model_path(filename: str, suffix: str) -> Path:
+    """Build sidecar path and prevent traversal. Returns the full Path."""
+    if ".." in filename or filename.startswith("/"):
+        raise HTTPException(status_code=403, detail="Invalid filename")
+    stem = Path(filename).stem
+    return MODELS_DIR / f"{stem}{suffix}"
 
 
 @router.get("")
@@ -37,9 +48,9 @@ async def model_registry():
     from quant_ex.features.base import FactorRegistry
 
     try:
-        from quant_ex.models import trainer
-    except Exception:
-        pass
+        from quant_ex.models import trainer  # noqa: F401
+    except Exception as exc:
+        logger.warning("Failed to import trainer: %s", exc)
 
     return {
         "models": [{"name": n} for n in ModelRegistry.list()],
@@ -49,18 +60,18 @@ async def model_registry():
 
 @router.get("/{filename}/meta")
 async def get_meta(filename: str):
-    meta_path = MODELS_DIR / f"{Path(filename).stem}_meta.json"
+    meta_path = _safe_model_path(filename, "_meta.json")
     if not meta_path.exists():
-        return {}
+        raise HTTPException(status_code=404, detail="Meta file not found")
     with open(meta_path) as f:
         return json.load(f)
 
 
 @router.get("/{filename}/importance")
 async def get_importance(filename: str):
-    imp_path = MODELS_DIR / f"{Path(filename).stem}_feature_importance.json"
+    imp_path = _safe_model_path(filename, "_feature_importance.json")
     if not imp_path.exists():
-        return {}
+        raise HTTPException(status_code=404, detail="Importance file not found")
     with open(imp_path) as f:
         return json.load(f)
 

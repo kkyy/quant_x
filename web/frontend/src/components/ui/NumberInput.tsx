@@ -39,11 +39,9 @@ export function NumberInput({
         }
       }}
       className={clsx(
-        "w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg",
-        "text-sm text-zinc-200 placeholder-zinc-500",
-        "focus:outline-none focus:ring-1 focus:ring-zinc-500 focus:border-zinc-500",
-        "hover:border-zinc-600",
-        "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
+        "w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm",
+        "text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim",
+        "focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors",
         className
       )}
     />

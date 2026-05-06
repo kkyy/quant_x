@@ -132,6 +132,8 @@
   },
   "backtest": {
     "title": "Backtest",
+    "launchTab": "Launch",
+    "compareTab": "Compare",
     "gridTab": "Grid Search",
     "resultsTab": "Results",
     "wfvTab": "Walk-Forward",
@@ -150,13 +152,16 @@
     "trainUniverses": "Train Universes (comma-separated)",
     "evalMarket": "Eval Market",
     "workers": "Workers",
-    "runWfv": "Run Walk-Forward Validation"
+    "runWfv": "Run Walk-Forward Validation",
+    "noCurveData": "No equity curve data available for this result file."
   },
   "signals": {
     "title": "Signals",
     "generateTab": "Generate",
+    "dailyTab": "Daily",
     "historyTab": "History",
     "rebalanceTab": "Rebalance",
+    "regimeTab": "Regime",
     "notificationTab": "Notification",
     "model": "Model",
     "noModels": "No models found",
@@ -226,6 +231,7 @@
   "system": {
     "title": "System",
     "runtimeTab": "Runtime",
+    "tasksTab": "Tasks",
     "logsTab": "Logs",
     "cacheTab": "Cache",
     "pythonVersion": "Python Version",

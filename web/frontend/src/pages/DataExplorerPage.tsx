@@ -1,16 +1,16 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Card } from "../components/ui/Card";
 import { Tabs } from "../components/ui/Tabs";
-import { Badge } from "../components/ui/Badge";
 import { Table } from "../components/ui/Table";
 import { Select } from "../components/ui/Select";
 import { SearchInput } from "../components/ui/SearchInput";
 import { DatePicker } from "../components/ui/DatePicker";
 import { MultiSelect } from "../components/ui/MultiSelect";
 import { EChartsWrapper } from "../components/ui/EChartsWrapper";
-import { get, del, searchStocks, fetchStockQuotes, fetchSectors, fetchSectorStocks, fetchAltData, fetchFactorValues } from "../api/client";
-import type { StockQuote, SectorInfo, AltDataResponse } from "../api/types";
+import { Skeleton, SkeletonTable } from "../components/ui/Skeleton";
+import { get, del, searchStocks, fetchStockQuotes, fetchSectors, fetchSectorStocks, fetchSectorRotation, fetchAltData, fetchFactorValues } from "../api/client";
+import type { StockQuote, SectorInfo, SectorRotation, AltDataResponse } from "../api/types";
 
 const DATA_TABS = [
   { key: "quotes", label: "Stock Quotes" },
@@ -88,22 +88,22 @@ function StockQuotesTab() {
 
   const chartOption = quotes.length > 0 ? {
     tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
-    legend: { data: ["K线", "Volume", ...overlays.map(o => o.toUpperCase())], textStyle: { color: "#9ca3af" } },
+    legend: { data: ["K线", "Volume", ...overlays.map(o => o.toUpperCase())], textStyle: { color: "#71717a" } },
     grid: [
       { left: 60, right: 20, top: 40, height: "55%" },
       { left: 60, right: 20, top: "72%", height: "18%" },
     ],
     xAxis: [
-      { type: "category", data: quotes.map(q => q.date), gridIndex: 0, axisLine: { lineStyle: { color: "#374151" } }, axisLabel: { color: "#6b7280", fontSize: 10 } },
+      { type: "category", data: quotes.map(q => q.date), gridIndex: 0, axisLine: { lineStyle: { color: "#27272a" } }, axisLabel: { color: "#71717a", fontSize: 10 } },
       { type: "category", data: quotes.map(q => q.date), gridIndex: 1, axisLabel: { show: false } },
     ],
     yAxis: [
-      { type: "value", gridIndex: 0, scale: true, splitLine: { lineStyle: { color: "#1f2937" } }, axisLabel: { color: "#6b7280", fontSize: 10 } },
+      { type: "value", gridIndex: 0, scale: true, splitLine: { lineStyle: { color: "#1e1e22" } }, axisLabel: { color: "#71717a", fontSize: 10 } },
       { type: "value", gridIndex: 1, scale: true, splitLine: { show: false }, axisLabel: { show: false } },
     ],
     dataZoom: [
       { type: "inside", xAxisIndex: [0, 1], start: Math.max(0, 100 - (200 / quotes.length) * 100) },
-      { type: "slider", xAxisIndex: [0, 1], bottom: 10, height: 16, borderColor: "#374151", fillerColor: "rgba(59,130,246,0.2)", handleStyle: { color: "#60a5fa" } },
+      { type: "slider", xAxisIndex: [0, 1], bottom: 10, height: 16, borderColor: "#27272a", fillerColor: "rgba(34,197,94,0.15)", handleStyle: { color: "#22c55e" } },
     ],
     series: [
       {
@@ -112,15 +112,15 @@ function StockQuotesTab() {
         xAxisIndex: 0,
         yAxisIndex: 0,
         data: quotes.map(q => [q.open, q.close, q.low, q.high]),
-        itemStyle: { color: "#10b981", color0: "#ef4444", borderColor: "#10b981", borderColor0: "#ef4444" },
+        itemStyle: { color: "#22c55e", color0: "#ef4444", borderColor: "#22c55e", borderColor0: "#ef4444" },
       },
       {
         name: "Volume",
         type: "bar",
         xAxisIndex: 1,
         yAxisIndex: 1,
-        data: quotes.map(q => [q.volume, q.close >= q.open ? "#10b981" : "#ef4444"]),
-        itemStyle: { color: (params: any) => params.data?.[1] || "#10b981" },
+        data: quotes.map(q => [q.volume, q.close >= q.open ? "#22c55e" : "#ef4444"]),
+        itemStyle: { color: (params: any) => params.data?.[1] || "#22c55e" },
         encode: { y: 0 },
       },
       ...(overlays.includes("ma5") ? [{
@@ -140,7 +140,7 @@ function StockQuotesTab() {
         yAxisIndex: 0,
         data: computeMA(quotes.map(q => q.close), 20),
         smooth: true,
-        lineStyle: { width: 1, color: "#8b5cf6" },
+        lineStyle: { width: 1, color: "#06b6d4" },
         symbol: "none",
       }] : []),
     ],
@@ -151,32 +151,32 @@ function StockQuotesTab() {
       {/* Left sidebar */}
       <div className="w-72 space-y-4 shrink-0">
         <Card>
-          <p className="text-xs text-zinc-500 uppercase mb-2">{t("dataExplorer.search")}</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-2 font-mono tracking-wider">{t("dataExplorer.search")}</p>
           <SearchInput value={query} onChange={handleSearch} placeholder="600519 / 茅台" />
           {searchResults.length > 0 && (
-            <div className="mt-2 bg-zinc-800 border border-zinc-700 rounded-md max-h-48 overflow-auto">
+            <div className="mt-2 bg-terminal-raised border border-terminal-border rounded-sm max-h-48 overflow-auto">
               {searchResults.map((r) => (
                 <button
                   key={r.symbol}
                   onClick={() => selectStock(r.symbol, r.name)}
-                  className="w-full px-3 py-2 text-left hover:bg-zinc-700 text-sm flex justify-between"
+                  className="w-full px-3 py-2 text-left hover:bg-terminal-border text-sm flex justify-between transition-colors"
                 >
-                  <span className="text-zinc-300">{r.symbol}</span>
-                  <span className="text-zinc-500">{r.name}</span>
+                  <span className="text-terminal-text font-mono text-xs">{r.symbol}</span>
+                  <span className="text-terminal-text-dim">{r.name}</span>
                 </button>
               ))}
             </div>
           )}
         </Card>
         <Card>
-          <p className="text-xs text-zinc-500 uppercase mb-2">{t("dataExplorer.dateRange")}</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-2 font-mono tracking-wider">{t("dataExplorer.dateRange")}</p>
           <div className="flex gap-2">
             <DatePicker value={startDate} onChange={setStartDate} className="flex-1" />
             <DatePicker value={endDate} onChange={setEndDate} className="flex-1" />
           </div>
         </Card>
         <Card>
-          <p className="text-xs text-zinc-500 uppercase mb-2">{t("dataExplorer.overlays")}</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-2 font-mono tracking-wider">{t("dataExplorer.overlays")}</p>
           <MultiSelect
             options={OVERLAY_OPTIONS}
             values={overlays}
@@ -187,13 +187,13 @@ function StockQuotesTab() {
         {lastQuote && (
           <Card title={selectedName || selectedSymbol}>
             <div className="space-y-1 text-sm">
-              <div className="flex justify-between"><span className="text-zinc-500">Open</span><span className="text-zinc-300">{lastQuote.open?.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">High</span><span className="text-emerald-400">{lastQuote.high?.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">Low</span><span className="text-red-400">{lastQuote.low?.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">Close</span><span className="text-zinc-200">{lastQuote.close?.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">Volume</span><span className="text-zinc-400">{(lastQuote.volume / 1e4).toFixed(0)}万</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">Change</span>
-                <span className={lastQuote.change >= 0 ? "text-emerald-400" : "text-red-400"}>
+              <div className="flex justify-between"><span className="text-terminal-text-dim">Open</span><span className="text-terminal-text font-mono">{lastQuote.open?.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span className="text-terminal-text-dim">High</span><span className="text-terminal-green font-mono">{lastQuote.high?.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span className="text-terminal-text-dim">Low</span><span className="text-terminal-red font-mono">{lastQuote.low?.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span className="text-terminal-text-dim">Close</span><span className="text-terminal-text-bright font-mono">{lastQuote.close?.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span className="text-terminal-text-dim">Volume</span><span className="text-terminal-text-dim font-mono">{(lastQuote.volume / 1e4).toFixed(0)}万</span></div>
+              <div className="flex justify-between"><span className="text-terminal-text-dim">Change</span>
+                <span className={`font-mono ${lastQuote.change >= 0 ? "text-terminal-green" : "text-terminal-red"}`}>
                   {(lastQuote.change * 100).toFixed(2)}%
                 </span>
               </div>
@@ -204,11 +204,11 @@ function StockQuotesTab() {
 
       {/* Right main chart area */}
       <div className="flex-1">
-        {loading && <p className="text-zinc-500 text-sm">{t("common.loading")}</p>}
+        {loading && <Skeleton className="h-[520px] w-full" />}
         {!loading && chartOption && <EChartsWrapper option={chartOption} height={520} />}
-        {!loading && !chartOption && selectedSymbol && <p className="text-zinc-500 text-sm">{t("dataExplorer.noData")}</p>}
+        {!loading && !chartOption && selectedSymbol && <p className="text-terminal-text-dim text-sm">{t("dataExplorer.noData")}</p>}
         {!selectedSymbol && (
-          <div className="flex items-center justify-center h-96 text-zinc-600 text-sm">
+          <div className="flex items-center justify-center h-96 text-terminal-text-dim text-sm font-mono">
             {t("dataExplorer.searchHint")}
           </div>
         )}
@@ -223,6 +223,8 @@ function SectorsTab() {
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
   const [sectorStocks, setSectorStocks] = useState<{ symbol: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [rotation, setRotation] = useState<SectorRotation[]>([]);
+  const [rotationLoading, setRotationLoading] = useState(false);
 
   useEffect(() => {
     fetchSectors()
@@ -230,6 +232,14 @@ function SectorsTab() {
       .catch(() => setSectors([]))
       .finally(() => setLoading(false));
   }, []);
+
+  const loadRotation = () => {
+    setRotationLoading(true);
+    fetchSectorRotation("1,5,20")
+      .then(setRotation)
+      .catch(() => setRotation([]))
+      .finally(() => setRotationLoading(false));
+  };
 
   const handleSectorClick = (row: Record<string, unknown>) => {
     const id = row.sector_id as string;
@@ -239,39 +249,110 @@ function SectorsTab() {
       .catch(() => setSectorStocks([]));
   };
 
-  if (loading) return <p className="text-zinc-500 text-sm">{t("common.loading")}</p>;
+  const rotationHeatmapOption = useMemo(() => {
+    if (rotation.length === 0) return null;
+    const windows = Object.keys(rotation[0].returns).sort();
+    const sectorNames = rotation.map((r) => r.sector_name);
+    const data: [number, number, number][] = [];
+    rotation.forEach((r, i) => {
+      windows.forEach((w, j) => {
+        data.push([j, i, r.returns[w] ?? 0]);
+      });
+    });
+    return {
+      tooltip: {
+        position: "top",
+        formatter: (params: any) => {
+          const val = params.data[2];
+          return `${sectorNames[params.data[1]]} / ${windows[params.data[0]]}: ${(val * 100).toFixed(2)}%`;
+        },
+      },
+      grid: { left: 120, right: 30, top: 10, bottom: 50 },
+      xAxis: {
+        type: "category",
+        data: windows,
+        axisLabel: { color: "#71717a", fontSize: 11 },
+        axisLine: { lineStyle: { color: "#27272a" } },
+      },
+      yAxis: {
+        type: "category",
+        data: sectorNames,
+        axisLabel: { color: "#71717a", fontSize: 10 },
+        axisLine: { lineStyle: { color: "#27272a" } },
+      },
+      visualMap: {
+        min: -0.1,
+        max: 0.1,
+        inRange: { color: ["#7f1d1d", "#18181b", "#065f46"] },
+        textStyle: { color: "#71717a" },
+      },
+      series: [
+        {
+          type: "heatmap",
+          data,
+          label: {
+            show: true,
+            fontSize: 9,
+            color: "#c8ccd0",
+            formatter: (p: any) => `${(p.data[2] * 100).toFixed(1)}%`,
+          },
+        },
+      ],
+    };
+  }, [rotation]);
+
+  if (loading) return <SkeletonTable rows={8} />;
 
   return (
-    <div className="flex gap-4">
-      <div className="flex-1">
-        <Table
-          columns={[
-            { key: "sector_name", label: "Sector", sortable: true },
-            { key: "stock_count", label: "Stocks", align: "right", sortable: true },
-          ]}
-          data={sectors as unknown as Record<string, unknown>[]}
-          onRowClick={handleSectorClick}
-          pageSize={20}
-        />
-      </div>
-      {selectedSector && (
-        <div className="w-72">
-          <Card title={selectedSector}>
-            {sectorStocks.length > 0 ? (
-              <div className="max-h-96 overflow-auto space-y-1">
-                {sectorStocks.map((s) => (
-                  <div key={s.symbol} className="flex justify-between text-sm px-2 py-1 hover:bg-zinc-800 rounded">
-                    <span className="text-zinc-300 font-mono text-xs">{s.symbol}</span>
-                    <span className="text-zinc-500">{s.name}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-zinc-500 text-sm">{t("common.noData")}</p>
-            )}
-          </Card>
+    <div className="space-y-4">
+      <div className="flex gap-4">
+        <div className="flex-1">
+          <Table
+            columns={[
+              { key: "sector_name", label: "Sector", sortable: true },
+              { key: "stock_count", label: "Stocks", align: "right", sortable: true },
+            ]}
+            data={sectors as unknown as Record<string, unknown>[]}
+            onRowClick={handleSectorClick}
+            pageSize={20}
+          />
         </div>
-      )}
+        {selectedSector && (
+          <div className="w-72">
+            <Card title={selectedSector}>
+              {sectorStocks.length > 0 ? (
+                <div className="max-h-96 overflow-auto space-y-1">
+                  {sectorStocks.map((s) => (
+                    <div key={s.symbol} className="flex justify-between text-sm px-2 py-1 hover:bg-terminal-raised rounded-sm transition-colors">
+                      <span className="text-terminal-text font-mono text-xs">{s.symbol}</span>
+                      <span className="text-terminal-text-dim">{s.name}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-terminal-text-dim text-sm">{t("common.noData")}</p>
+              )}
+            </Card>
+          </div>
+        )}
+      </div>
+      <Card title="Sector Rotation Heatmap">
+        <div className="space-y-3">
+          <button
+            onClick={loadRotation}
+            disabled={rotationLoading}
+            className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
+          >
+            {rotationLoading ? t("common.loading") : "Load Rotation"}
+          </button>
+          {rotationHeatmapOption && (
+            <EChartsWrapper option={rotationHeatmapOption} height={Math.max(300, rotation.length * 28 + 60)} />
+          )}
+          {!rotationHeatmapOption && rotation.length === 0 && !rotationLoading && (
+            <p className="text-terminal-text-dim text-sm font-mono">Click "Load Rotation" to fetch sector returns across time windows.</p>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -297,7 +378,7 @@ function AltDataTab() {
     <div className="space-y-4">
       <div className="flex gap-3 items-end">
         <div className="w-48">
-          <p className="text-xs text-zinc-500 uppercase mb-1">Data Type</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">Data Type</p>
           <Select
             options={ALT_DATA_TYPES.map(t => ({ value: t, label: t }))}
             value={dataType}
@@ -305,39 +386,39 @@ function AltDataTab() {
           />
         </div>
         <div className="w-48">
-          <p className="text-xs text-zinc-500 uppercase mb-1">Symbol</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">Symbol</p>
           <SearchInput value={symbol} onChange={setSymbol} placeholder="Filter symbol..." />
         </div>
         <DatePicker value={startDate} onChange={setStartDate} />
         <DatePicker value={endDate} onChange={setEndDate} />
         <button
           onClick={fetchData}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+          className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm"
         >
           {t("common.search")}
         </button>
       </div>
 
-      {loading && <p className="text-zinc-500 text-sm">{t("common.loading")}</p>}
+      {loading && <SkeletonTable rows={6} />}
       {data && data.rows.length > 0 && (
         <Card>
-          <p className="text-xs text-zinc-500 mb-2">
+          <p className="text-xs text-terminal-text-dim mb-2 font-mono">
             {data.total} rows ({data.columns.length} cols) {data.has_more ? "(showing first 100)" : ""}
           </p>
           <div className="overflow-x-auto max-h-96 overflow-y-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-700 sticky top-0 bg-zinc-900">
+                <tr className="border-b border-terminal-border sticky top-0 bg-terminal-surface">
                   {data.columns.map((col) => (
-                    <th key={col} className="px-3 py-2 text-left text-xs text-zinc-400 uppercase">{col}</th>
+                    <th key={col} className="px-3 py-2 text-left text-xs text-terminal-text-dim uppercase font-mono tracking-wider">{col}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {data.rows.map((row, i) => (
-                  <tr key={i} className="border-b border-zinc-800 hover:bg-zinc-800/50">
+                  <tr key={i} className="border-b border-terminal-border-dim hover:bg-terminal-raised transition-colors">
                     {data.columns.map((col) => (
-                      <td key={col} className="px-3 py-1 text-zinc-300 text-xs">{row[col] ?? "-"}</td>
+                      <td key={col} className="px-3 py-1 text-terminal-text text-xs font-mono">{String(row[col] ?? "-")}</td>
                     ))}
                   </tr>
                 ))}
@@ -346,13 +427,12 @@ function AltDataTab() {
           </div>
         </Card>
       )}
-      {data && data.rows.length === 0 && <p className="text-zinc-500 text-sm">{t("common.noData")}</p>}
+      {data && data.rows.length === 0 && <p className="text-terminal-text-dim text-sm">{t("common.noData")}</p>}
     </div>
   );
 }
 
 function FactorValuesTab() {
-  const { t } = useTranslation();
   const [factorList, setFactorList] = useState<{ value: string; label: string }[]>([]);
   const [selectedFactors, setSelectedFactors] = useState<string[]>([]);
   const [symbols, setSymbols] = useState("");
@@ -387,11 +467,11 @@ function FactorValuesTab() {
     <div className="space-y-4">
       <div className="flex gap-3 items-end">
         <div className="w-64">
-          <p className="text-xs text-zinc-500 uppercase mb-1">Factors</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">Factors</p>
           <MultiSelect options={factorList} values={selectedFactors} onChange={setSelectedFactors} placeholder="Select factors..." />
         </div>
         <div className="w-48">
-          <p className="text-xs text-zinc-500 uppercase mb-1">Symbols</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">Symbols</p>
           <SearchInput value={symbols} onChange={setSymbols} placeholder="SH600519,SZ000001" />
         </div>
         <DatePicker value={startDate} onChange={setStartDate} />
@@ -399,31 +479,31 @@ function FactorValuesTab() {
         <button
           onClick={fetchValues}
           disabled={selectedFactors.length === 0}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-30"
+          className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
         >
           Query
         </button>
       </div>
 
-      {loading && <p className="text-zinc-500 text-sm">{t("common.loading")}</p>}
+      {loading && <SkeletonTable rows={6} />}
       {data && data.data.length > 0 && (
         <Card>
-          <p className="text-xs text-zinc-500 mb-2">{data.data.length} rows</p>
+          <p className="text-xs text-terminal-text-dim mb-2 font-mono">{data.data.length} rows</p>
           <div className="overflow-x-auto max-h-96 overflow-y-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-700 sticky top-0 bg-zinc-900">
+                <tr className="border-b border-terminal-border sticky top-0 bg-terminal-surface">
                   {columns.map((col) => (
-                    <th key={col} className="px-3 py-2 text-left text-xs text-zinc-400 uppercase">{col}</th>
+                    <th key={col} className="px-3 py-2 text-left text-xs text-terminal-text-dim uppercase font-mono tracking-wider">{col}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {data.data.slice(0, 200).map((row, i) => (
-                  <tr key={i} className="border-b border-zinc-800 hover:bg-zinc-800/50">
+                  <tr key={i} className="border-b border-terminal-border-dim hover:bg-terminal-raised transition-colors">
                     {columns.map((col) => (
-                      <td key={col} className="px-3 py-1 text-zinc-300 text-xs">
-                        {typeof row[col] === "number" ? (row[col] as number).toFixed(4) : row[col] ?? "-"}
+                      <td key={col} className="px-3 py-1 text-terminal-text text-xs font-mono">
+                        {typeof row[col] === "number" ? (row[col] as number).toFixed(4) : String(row[col] ?? "-")}
                       </td>
                     ))}
                   </tr>
@@ -466,7 +546,7 @@ function CacheTab() {
       .catch(() => {});
   };
 
-  if (loading) return <p className="text-zinc-500 text-sm">{t("common.loading")}</p>;
+  if (loading) return <SkeletonTable rows={5} />;
 
   return (
     <Table
@@ -477,7 +557,7 @@ function CacheTab() {
         { key: "latest", label: "Latest", render: (row) => (row.latest ? new Date(row.latest as string).toLocaleDateString() : "-") },
         { key: "ttl_days", label: "TTL (days)", align: "right" },
         { key: "actions", label: "", render: (row) => (
-          <button onClick={() => deleteExpired(row.type as string)} className="px-2 py-1 text-xs bg-red-900/50 text-red-300 rounded hover:bg-red-800/50">
+          <button onClick={() => deleteExpired(row.type as string)} className="px-3 py-1.5 text-xs font-mono border border-terminal-red text-terminal-red hover:bg-terminal-red-glow transition-colors rounded-sm">
             {t("common.deleteExpired")}
           </button>
         )},
@@ -493,9 +573,9 @@ export function DataExplorerPage() {
   const [activeTab, setActiveTab] = useState("quotes");
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-zinc-100">{t("dataExplorer.title")}</h1>
+        <h1 className="text-sm font-mono font-semibold text-terminal-text-bright uppercase tracking-wider">{t("dataExplorer.title")}</h1>
         <Tabs tabs={DATA_TABS} activeKey={activeTab} onChange={setActiveTab} />
       </div>
 

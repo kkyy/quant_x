@@ -1,244 +1,639 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { Card } from "../components/ui/Card";
+import { Tabs } from "../components/ui/Tabs";
+import { Badge } from "../components/ui/Badge";
+import { Select } from "../components/ui/Select";
+import { NumberInput } from "../components/ui/NumberInput";
+import { DatePicker } from "../components/ui/DatePicker";
+import { TaskStatus } from "../components/ui/TaskStatus";
+import { Skeleton } from "../components/ui/Skeleton";
 import { get, post } from "../api/client";
 
-interface ModelInfo { filename: string; size_mb: number; modified: string; meta: Record<string, unknown>; }
-interface SignalFile { filename: string; size_kb: number; modified: string; }
-interface SignalContent { content: string; }
-interface RegimeInfo { enabled: boolean; regime: number | null; label: string | null; error?: string; }
-type Tab = "generate" | "history" | "rebalance" | "notification";
-
-export function SignalsPage() {
-  const { t } = useTranslation();
-  const [tab, setTab] = useState<Tab>("generate");
-
-  const tabs: { key: Tab; label: string }[] = [
-    { key: "generate", label: t('signals.generateTab') },
-    { key: "history", label: t('signals.historyTab') },
-    { key: "rebalance", label: t('signals.rebalanceTab') },
-    { key: "notification", label: t('signals.notificationTab') },
-  ];
-
-  return (
-    <div className="space-y-4 max-w-5xl">
-      <h2 className="text-2xl font-bold text-zinc-900">{t('signals.title')}</h2>
-      <div className="flex gap-1 border-b border-zinc-200">
-        {tabs.map((tb) => (
-          <button key={tb.key} onClick={() => setTab(tb.key)}
-            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
-              tab === tb.key ? "border-amber-500 text-amber-600" : "border-transparent text-zinc-500 hover:text-zinc-700"
-            }`}>
-            {tb.label}
-          </button>
-        ))}
-      </div>
-      {tab === "generate" && <GenerateTab />}
-      {tab === "history" && <HistoryTab />}
-      {tab === "rebalance" && <RebalanceTab />}
-      {tab === "notification" && <NotificationTab />}
-    </div>
-  );
+interface ModelInfo {
+  filename: string;
+  size_mb: number;
+  modified: string;
+  meta: Record<string, unknown>;
 }
+interface SignalFile {
+  filename: string;
+  size_kb: number;
+  modified: string;
+}
+interface SignalContent {
+  content: string;
+}
+interface RegimeInfo {
+  enabled: boolean;
+  regime: number | null;
+  label: string | null;
+  error?: string;
+}
+
+const SIGNALS_TABS = [
+  { key: "generate", label: "Generate" },
+  { key: "daily", label: "Daily" },
+  { key: "rebalance", label: "Rebalance" },
+  { key: "regime", label: "Regime" },
+  { key: "notification", label: "Notification" },
+];
+
+// ─── Generate Tab ──────────────────────────────────────────────────────
 
 function GenerateTab() {
   const { t } = useTranslation();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelPath, setModelPath] = useState("");
-  const [account, setAccount] = useState("1000000");
+  const [account, setAccount] = useState(1000000);
   const [positions, setPositions] = useState("");
   const [dryRun, setDryRun] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [taskStatus, setTaskStatus] = useState<string | null>(null);
-  const [regime, setRegime] = useState<RegimeInfo | null>(null);
 
   useEffect(() => {
-    get<ModelInfo[]>("/models").then((data) => { setModels(data); if (data.length > 0 && !modelPath) setModelPath(data[0].filename); });
-    get<RegimeInfo>("/signals/regime").then(setRegime).catch(() => {});
+    get<ModelInfo[]>("/models").then((data) => {
+      setModels(data);
+      if (data.length > 0 && !modelPath) setModelPath(data[0].filename);
+    });
   }, []);
 
-  const handleSubmit = async () => {
-    setSubmitting(true); setTaskStatus(null);
-    try {
-      const res = await post<{ task_id: string }>("/signals/generate", {
-        model_path: modelPath, account: parseFloat(account) || 1000000, positions: positions || null, dry_run: dryRun,
-      });
-      setTaskId(res.task_id);
-      const interval = setInterval(async () => {
-        try {
-          const tasks = await get<{ task_id: string; status: string; error?: string }[]>("/system/tasks");
-          const tk = tasks.find((x) => x.task_id === res.task_id);
-          if (tk) { setTaskStatus(tk.status); if (["done","failed","cancelled"].includes(tk.status)) clearInterval(interval); }
-        } catch { clearInterval(interval); }
-      }, 2000);
-    } catch (err) { setTaskStatus(`Error: ${err}`); }
-    finally { setSubmitting(false); }
+  const handleGenerate = async () => {
+    const res = await post<{ task_id: string }>("/signals/generate", {
+      model_path: modelPath,
+      account,
+      positions: positions || null,
+      dry_run: dryRun,
+    });
+    setTaskId(res.task_id);
   };
 
-  const inputCls = "w-full border border-zinc-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400";
+  const modelOptions = models.map((m) => ({
+    value: m.filename,
+    label: `${m.filename} (${m.size_mb} MB)`,
+  }));
 
   return (
-    <div className="max-w-2xl space-y-4">
-      {regime && (
-        <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg text-sm">
-          <span className="text-zinc-500">{t('signals.regime')}: </span>
-          {regime.enabled ? (
-            <span className="inline-block px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-medium">{regime.label ?? t('common.enabled')}</span>
-          ) : (
-            <span className="text-zinc-400">{t('common.disabled')}</span>
-          )}
+    <div className="space-y-4 max-w-2xl">
+      <Card title={t("signals.generateTab")}>
+        <div className="space-y-4">
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("signals.model")}
+            </p>
+            <Select
+              options={modelOptions}
+              value={modelPath}
+              onChange={setModelPath}
+              searchable
+            />
+          </div>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("signals.account")}
+            </p>
+            <NumberInput
+              value={account}
+              onChange={(v) => setAccount(v ?? 1000000)}
+              min={10000}
+              step={100000}
+            />
+          </div>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("signals.positions")}
+            </p>
+            <textarea
+              value={positions}
+              onChange={(e) => setPositions(e.target.value)}
+              rows={3}
+              className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+              placeholder={t("signals.positionsPlaceholder")}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+            <input
+              type="checkbox"
+              checked={dryRun}
+              onChange={(e) => setDryRun(e.target.checked)}
+              className="accent-terminal-green"
+            />
+            {t("signals.dryRun")}
+          </label>
+          <button
+            onClick={handleGenerate}
+            disabled={!modelPath}
+            className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
+          >
+            {t("signals.generateBtn")}
+          </button>
         </div>
-      )}
-      <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">{t('signals.model')}</label>
-        <select value={modelPath} onChange={(e) => setModelPath(e.target.value)} className={inputCls}>
-          {models.length === 0 && <option value="">{t('signals.noModels')}</option>}
-          {models.map((m) => <option key={m.filename} value={m.filename}>{m.filename} ({m.size_mb} MB)</option>)}
-        </select>
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">{t('signals.account')}</label>
-        <input type="number" value={account} onChange={(e) => setAccount(e.target.value)} className={inputCls} />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">{t('signals.positions')}</label>
-        <textarea value={positions} onChange={(e) => setPositions(e.target.value)} rows={3}
-          className={`${inputCls} font-mono`} placeholder={t('signals.positionsPlaceholder')} />
-      </div>
-      <label className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
-        <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="rounded" />
-        {t('signals.dryRun')}
-      </label>
-      <button onClick={handleSubmit} disabled={submitting || !modelPath}
-        className="px-4 py-2 bg-amber-500 text-zinc-900 font-medium rounded-md text-sm hover:bg-amber-600 disabled:opacity-50">
-        {submitting ? t('common.starting') : t('signals.generateBtn')}
-      </button>
-      {taskId && (
-        <div className="mt-4 p-3 bg-zinc-50 border border-zinc-200 rounded-lg text-sm">
-          <p className="text-zinc-600">{t('common.taskId')}: <span className="font-mono text-amber-600">{taskId}</span></p>
-          {taskStatus && <p className="mt-1 text-zinc-600">{t('common.status')}: <span className={taskStatus === "done" ? "text-green-600" : taskStatus === "failed" ? "text-red-600" : "text-amber-600"}>{taskStatus}</span></p>}
-        </div>
-      )}
+      </Card>
+      <TaskStatus taskId={taskId} />
     </div>
   );
 }
 
-function HistoryTab() {
+// ─── Daily Tab (full params) ───────────────────────────────────────────
+
+function DailyTab() {
+  const { t } = useTranslation();
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelPath, setModelPath] = useState("");
+  const [account, setAccount] = useState(1000000);
+  const [positions, setPositions] = useState("");
+  const [universe, setUniverse] = useState("");
+  const [config, setConfig] = useState("");
+  const [positionDate, setPositionDate] = useState("");
+  const [minActionValue, setMinActionValue] = useState<number | undefined>(
+    undefined
+  );
+  const [refreshCache, setRefreshCache] = useState(false);
+  const [dryRun, setDryRun] = useState(true);
+  const [taskId, setTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    get<ModelInfo[]>("/models").then((data) => {
+      setModels(data);
+      if (data.length > 0 && !modelPath) setModelPath(data[0].filename);
+    });
+  }, []);
+
+  const handleDaily = async () => {
+    const body: Record<string, unknown> = {
+      model_path: modelPath,
+      account,
+      positions: positions || null,
+      dry_run: dryRun,
+      universe: universe || undefined,
+      refresh_cache: refreshCache,
+    };
+    if (config.trim()) body.config = config.trim();
+    if (positionDate) body.position_date = positionDate;
+    if (minActionValue != null) body.min_action_value = minActionValue;
+    const res = await post<{ task_id: string }>("/signals/generate", body);
+    setTaskId(res.task_id);
+  };
+
+  const modelOptions = models.map((m) => ({
+    value: m.filename,
+    label: `${m.filename} (${m.size_mb} MB)`,
+  }));
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <Card title="Daily Signal (Full Params)">
+        <div className="space-y-4">
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("signals.model")}
+            </p>
+            <Select
+              options={modelOptions}
+              value={modelPath}
+              onChange={setModelPath}
+              searchable
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+                {t("signals.account")}
+              </p>
+              <NumberInput
+                value={account}
+                onChange={(v) => setAccount(v ?? 1000000)}
+                min={10000}
+                step={100000}
+              />
+            </div>
+            <div>
+              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+                Universe
+              </p>
+              <Select
+                options={[
+                  { value: "", label: "Default" },
+                  { value: "csi300", label: "CSI 300" },
+                  { value: "csi500", label: "CSI 500" },
+                  { value: "csi800", label: "CSI 800" },
+                  { value: "csi1000", label: "CSI 1000" },
+                ]}
+                value={universe}
+                onChange={setUniverse}
+              />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("signals.positions")}
+            </p>
+            <textarea
+              value={positions}
+              onChange={(e) => setPositions(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+              placeholder={t("signals.positionsPlaceholder")}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+                Config Override
+              </p>
+              <input
+                type="text"
+                value={config}
+                onChange={(e) => setConfig(e.target.value)}
+                placeholder="config/daily_csi1000.yaml"
+                className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+              />
+            </div>
+            <div>
+              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+                Position Date
+              </p>
+              <DatePicker
+                value={positionDate}
+                onChange={setPositionDate}
+              />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              Min Action Value
+            </p>
+            <NumberInput
+              value={minActionValue}
+              onChange={(v) => setMinActionValue(v)}
+              min={0}
+              step={500}
+              placeholder="e.g. 1000"
+            />
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+              <input
+                type="checkbox"
+                checked={dryRun}
+                onChange={(e) => setDryRun(e.target.checked)}
+                className="accent-terminal-green"
+              />
+              {t("signals.dryRun")}
+            </label>
+            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+              <input
+                type="checkbox"
+                checked={refreshCache}
+                onChange={(e) => setRefreshCache(e.target.checked)}
+                className="accent-terminal-green"
+              />
+              Refresh Cache
+            </label>
+          </div>
+          <button
+            onClick={handleDaily}
+            disabled={!modelPath}
+            className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
+          >
+            Generate Daily Signal
+          </button>
+        </div>
+      </Card>
+      <TaskStatus taskId={taskId} />
+    </div>
+  );
+}
+
+// ─── Rebalance Tab ─────────────────────────────────────────────────────
+
+function RebalanceTab() {
+  const { t } = useTranslation();
+  const [mock, setMock] = useState(false);
+  const [dryRun, setDryRun] = useState(true);
+  const [config, setConfig] = useState("");
+  const [taskId, setTaskId] = useState<string | null>(null);
+
+  const handleRun = async () => {
+    const res = await post<{ task_id: string }>("/signals/rebalance", {
+      mock,
+      dry_run: dryRun,
+      config: config.trim() || undefined,
+    });
+    setTaskId(res.task_id);
+  };
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <Card title={t("signals.rebalanceTab")}>
+        <div className="space-y-4">
+          <p className="text-terminal-text-dim text-xs font-mono">{t("signals.rebalanceNote")}</p>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              Config Override
+            </p>
+            <input
+              type="text"
+              value={config}
+              onChange={(e) => setConfig(e.target.value)}
+              placeholder="config/daily_csi1000.yaml"
+              className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+            />
+          </div>
+          <div className="flex items-center gap-6">
+            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+              <input
+                type="checkbox"
+                checked={mock}
+                onChange={(e) => setMock(e.target.checked)}
+                className="accent-terminal-green"
+              />
+              {t("signals.mockMode")}
+            </label>
+            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+              <input
+                type="checkbox"
+                checked={dryRun}
+                onChange={(e) => setDryRun(e.target.checked)}
+                className="accent-terminal-green"
+              />
+              {t("signals.dryRun")}
+            </label>
+          </div>
+          <button
+            onClick={handleRun}
+            className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm"
+          >
+            {t("signals.runRebalance")}
+          </button>
+        </div>
+      </Card>
+      <TaskStatus taskId={taskId} />
+    </div>
+  );
+}
+
+// ─── Regime Tab ────────────────────────────────────────────────────────
+
+function RegimeTab() {
+  const { t } = useTranslation();
+  const [regime, setRegime] = useState<RegimeInfo | null>(null);
+
+  useEffect(() => {
+    get<RegimeInfo>("/signals/regime")
+      .then(setRegime)
+      .catch(() => {});
+  }, []);
+
+  const regimeLabels: Record<number, string> = {
+    0: "Calm Bull",
+    1: "Calm Bear",
+    2: "Volatile Bull",
+    3: "Volatile Bear",
+  };
+
+  const regimeColors: Record<number, string> = {
+    0: "bg-terminal-green-glow text-terminal-green border-terminal-green",
+    1: "bg-terminal-red-glow text-terminal-red border-terminal-red",
+    2: "bg-terminal-amber-glow text-terminal-amber border-terminal-amber",
+    3: "bg-terminal-cyan-glow text-terminal-cyan border-terminal-cyan",
+  };
+
+  return (
+    <Card title={t("signals.regime")}>
+      <div className="space-y-4">
+        {regime ? (
+          <>
+            <div className="flex items-center gap-4">
+              <Badge variant={regime.enabled ? "success" : "neutral"}>
+                {regime.enabled
+                  ? t("common.enabled")
+                  : t("common.disabled")}
+              </Badge>
+              {regime.enabled && regime.regime != null && (
+                <span
+                  className={`px-3 py-1 rounded-sm border text-xs font-mono font-semibold ${
+                    regimeColors[regime.regime] ?? "bg-terminal-raised text-terminal-text-dim border-terminal-border"
+                  }`}
+                >
+                  {regimeLabels[regime.regime] ?? `Regime ${regime.regime}`}
+                </span>
+              )}
+            </div>
+            {regime.error && (
+              <p className="text-terminal-red text-xs font-mono">{regime.error}</p>
+            )}
+            {regime.enabled && regime.label === "requires_price_data" && (
+              <p className="text-terminal-text-dim text-xs font-mono">
+                Regime detection requires real-time price data. Run during
+                market hours or with cached data.
+              </p>
+            )}
+          </>
+        ) : (
+          <Skeleton className="h-6 w-48" />
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ─── Notification Tab ──────────────────────────────────────────────────
+
+function NotificationTab() {
+  const { t } = useTranslation();
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [channel, setChannel] = useState("");
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; error?: string } | null>(null);
+
+  const handleSend = async () => {
+    setSending(true);
+    setResult(null);
+    try {
+      const res = await post<{ success: boolean; error?: string }>(
+        "/signals/notify-test",
+        {
+          title,
+          content,
+          channel: channel || undefined,
+        }
+      );
+      setResult(res);
+    } catch (err) {
+      setResult({ success: false, error: String(err) });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Card title={t("signals.notificationTab")}>
+      <div className="space-y-4 max-w-lg">
+        <p className="text-terminal-text-dim text-xs font-mono">{t("signals.notifNote")}</p>
+        <div>
+          <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+            {t("signals.notifTitle")}
+          </p>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={t("signals.notifTitlePlaceholder")}
+            className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+          />
+        </div>
+        <div>
+          <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+            {t("signals.notifContent")}
+          </p>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            rows={5}
+            className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+            placeholder={t("signals.notifPlaceholder")}
+          />
+        </div>
+        <div>
+          <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+            Channel (optional)
+          </p>
+          <input
+            type="text"
+            value={channel}
+            onChange={(e) => setChannel(e.target.value)}
+            placeholder="e.g. wechat, email"
+            className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+          />
+        </div>
+        <button
+          onClick={handleSend}
+          disabled={sending || !title}
+          className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
+        >
+          {sending ? t("common.sending") : t("signals.sendTest")}
+        </button>
+        {result && (
+          <div
+            className={`px-4 py-3 rounded-sm text-xs font-mono border ${
+              result.success
+                ? "bg-terminal-green-glow text-terminal-green border-terminal-green"
+                : "bg-terminal-red-glow text-terminal-red border-terminal-red"
+            }`}
+          >
+            {result.success ? t("common.sent") : `Error: ${result.error}`}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ─── History (inline) ──────────────────────────────────────────────────
+
+function HistorySection() {
   const { t } = useTranslation();
   const [files, setFiles] = useState<SignalFile[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { get<SignalFile[]>("/signals/history").then(setFiles); }, []);
+  useEffect(() => {
+    get<SignalFile[]>("/signals/history").then(setFiles);
+  }, []);
 
   const loadFile = async (filename: string) => {
-    setSelected(filename); setLoading(true);
-    try { const res = await get<SignalContent>(`/signals/history/${filename}`); setContent(res.content); }
-    catch { setContent(null); }
-    finally { setLoading(false); }
+    setSelected(filename);
+    setLoading(true);
+    try {
+      const res = await get<SignalContent>(
+        `/signals/history/${filename}`
+      );
+      setContent(res.content);
+    } catch {
+      setContent(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div>
-      <h3 className="text-lg font-semibold text-zinc-800 mb-3">{t('signals.historyTab')}</h3>
+    <Card title={t("signals.historyTab")}>
       {files.length === 0 ? (
-        <p className="text-zinc-500 text-sm">{t('signals.noHistory')}</p>
+        <p className="text-terminal-text-dim text-xs font-mono">{t("signals.noHistory")}</p>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-1">
-            <table className="w-full text-sm">
-              <thead><tr className="text-zinc-400 border-b border-zinc-200">
-                <th className="text-left py-2 text-xs uppercase tracking-wide">{t('common.filename')}</th>
-                <th className="text-right py-2 text-xs uppercase tracking-wide">{t('common.sizeKb')}</th>
-              </tr></thead>
-              <tbody>
-                {files.map((f) => (
-                  <tr key={f.filename} onClick={() => loadFile(f.filename)}
-                    className={`cursor-pointer border-b border-zinc-100 hover:bg-zinc-50 ${selected === f.filename ? "bg-zinc-50" : ""}`}>
-                    <td className="py-2 text-amber-600 font-mono text-xs">{f.filename}</td>
-                    <td className="text-right py-2 text-zinc-400">{f.size_kb} KB</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="lg:col-span-1 space-y-1 max-h-[500px] overflow-y-auto">
+            {files.map((f) => (
+              <button
+                key={f.filename}
+                onClick={() => loadFile(f.filename)}
+                className={`w-full text-left px-3 py-2 rounded-sm text-xs font-mono transition-colors ${
+                  selected === f.filename
+                    ? "bg-terminal-green-glow text-terminal-green"
+                    : "text-terminal-text-dim hover:bg-terminal-raised hover:text-terminal-text"
+                }`}
+              >
+                <span className="block truncate">{f.filename}</span>
+                <span className="text-terminal-text-dim">{f.size_kb} KB</span>
+              </button>
+            ))}
           </div>
           <div className="lg:col-span-2">
-            {loading && <p className="text-zinc-400 text-sm">{t('common.loading')}</p>}
-            {!loading && !selected && <p className="text-zinc-500 text-sm">{t('common.selectFile')}</p>}
+            {loading && (
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="h-4 w-full" />
+              </div>
+            )}
+            {!loading && !selected && (
+              <p className="text-terminal-text-dim text-xs font-mono">
+                {t("common.selectFile")}
+              </p>
+            )}
             {!loading && content && (
-              <pre className="bg-zinc-900 border border-zinc-700 rounded-lg p-4 text-xs text-zinc-300 overflow-auto max-h-[600px] whitespace-pre-wrap">{content}</pre>
+              <pre className="bg-terminal-surface border border-terminal-border rounded-sm p-4 text-xs font-mono text-terminal-text overflow-auto max-h-[500px] whitespace-pre-wrap">
+                {content}
+              </pre>
             )}
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
-function RebalanceTab() {
-  const { t } = useTranslation();
-  const [mock, setMock] = useState(false);
-  const [dryRun, setDryRun] = useState(true);
-  const [message, setMessage] = useState<string | null>(null);
+// ─── Main Page ─────────────────────────────────────────────────────────
 
-  const handleRun = () => {
-    setMessage(`Scheduled rebalance with mock=${mock}, dry-run=${dryRun}.\n${t('signals.rebalanceNote')}`);
-  };
+export function SignalsPage() {
+  const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState("generate");
 
   return (
-    <div className="max-w-2xl space-y-4">
-      <p className="text-zinc-500 text-sm">{t('signals.rebalanceNote')}</p>
-      <div className="flex items-center gap-6">
-        <label className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
-          <input type="checkbox" checked={mock} onChange={(e) => setMock(e.target.checked)} className="rounded" />
-          {t('signals.mockMode')}
-        </label>
-        <label className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
-          <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="rounded" />
-          {t('signals.dryRun')}
-        </label>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-sm font-mono font-semibold text-terminal-text-bright uppercase tracking-wider">
+          {t("signals.title")}
+        </h1>
+        <Tabs
+          tabs={SIGNALS_TABS}
+          activeKey={activeTab}
+          onChange={setActiveTab}
+        />
       </div>
-      <button onClick={handleRun} className="px-4 py-2 bg-amber-500 text-zinc-900 font-medium rounded-md text-sm hover:bg-amber-600">
-        {t('signals.runRebalance')}
-      </button>
-      {message && <pre className="bg-zinc-50 border border-zinc-200 rounded-lg p-4 text-sm text-zinc-700 whitespace-pre-wrap">{message}</pre>}
-    </div>
-  );
-}
 
-function NotificationTab() {
-  const { t } = useTranslation();
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
-  const [sending, setSending] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
+      {activeTab === "generate" && <GenerateTab />}
+      {activeTab === "daily" && <DailyTab />}
+      {activeTab === "rebalance" && <RebalanceTab />}
+      {activeTab === "regime" && <RegimeTab />}
+      {activeTab === "notification" && <NotificationTab />}
 
-  const handleSend = async () => {
-    setSending(true); setResult(null);
-    try { setResult(`Test notification sent.\nTitle: ${title}\nContent: ${content}`); }
-    catch (err) { setResult(`Error: ${err}`); }
-    finally { setSending(false); }
-  };
-
-  const inputCls = "w-full border border-zinc-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400";
-
-  return (
-    <div className="max-w-2xl space-y-4">
-      <p className="text-zinc-500 text-sm">{t('signals.notifNote')}</p>
-      <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">{t('signals.notifTitle')}</label>
-        <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls} placeholder={t('signals.notifTitlePlaceholder')} />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">{t('signals.notifContent')}</label>
-        <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={5} className={inputCls} placeholder={t('signals.notifPlaceholder')} />
-      </div>
-      <button onClick={handleSend} disabled={sending || !title}
-        className="px-4 py-2 bg-amber-500 text-zinc-900 font-medium rounded-md text-sm hover:bg-amber-600 disabled:opacity-50">
-        {sending ? t('common.sending') : t('signals.sendTest')}
-      </button>
-      {result && <pre className="bg-zinc-50 border border-zinc-200 rounded-lg p-4 text-sm text-zinc-700 whitespace-pre-wrap">{result}</pre>}
+      {/* History always visible below tabs */}
+      <HistorySection />
     </div>
   );
 }

@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { LanguageToggle } from "./LanguageToggle";
+import { motion } from "framer-motion";
 import {
   LayoutDashboard,
   Database,
@@ -11,6 +13,7 @@ import {
   Settings,
   Terminal,
 } from "lucide-react";
+import { clsx } from "clsx";
 
 const NAV_ITEMS = [
   { icon: LayoutDashboard, key: "overview", to: "/" },
@@ -25,33 +28,78 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <aside className="w-56 bg-zinc-900 h-screen sticky top-0 flex flex-col border-r border-zinc-800">
-      <div className="px-4 py-4 border-b border-zinc-800">
-        <h1 className="text-sm font-bold text-zinc-100 tracking-tight">quant_ex</h1>
-        <p className="text-xs text-zinc-500 mt-0.5">{t('nav.subtitle')}</p>
+    <motion.aside
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
+      animate={{ width: expanded ? 200 : 52 }}
+      transition={{ duration: 0.15, ease: "easeOut" }}
+      className="h-screen sticky top-0 flex flex-col bg-terminal-bg border-r border-terminal-border-dim z-40 overflow-hidden"
+    >
+      {/* Logo */}
+      <div className="flex items-center gap-2 px-3 py-3 border-b border-terminal-border-dim h-12">
+        <span className="text-sm font-mono font-bold text-terminal-green tracking-tight shrink-0">
+          QX
+        </span>
+        {expanded && (
+          <motion.span
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.1 }}
+            className="text-xs font-mono text-terminal-text-dim whitespace-nowrap"
+          >
+            quant_ex
+          </motion.span>
+        )}
       </div>
-      <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+
+      {/* Nav */}
+      <nav className="flex-1 py-1.5 space-y-0.5 overflow-y-auto overflow-x-hidden">
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.to === "/"}
             className={({ isActive }) =>
-              `flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors ${
+              clsx(
+                "flex items-center gap-2.5 mx-1.5 px-2.5 py-2 rounded-sm text-xs font-mono transition-colors relative",
                 isActive
-                  ? "bg-amber-500 text-zinc-900 font-semibold"
-                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-              }`
+                  ? "text-terminal-green bg-terminal-green-glow"
+                  : "text-terminal-text-dim hover:text-terminal-text hover:bg-terminal-raised"
+              )
             }
           >
-            <item.icon size={16} />
-            <span>{t(`nav.${item.key}`)}</span>
+            {({ isActive }) => (
+              <>
+                {isActive && (
+                  <motion.div
+                    layoutId="sidebar-indicator"
+                    className="absolute left-0 top-1 bottom-1 w-[2px] bg-terminal-green rounded-full"
+                    transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                  />
+                )}
+                <item.icon size={15} className="shrink-0" />
+                {expanded && (
+                  <motion.span
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.1 }}
+                    className="whitespace-nowrap"
+                  >
+                    {t(`nav.${item.key}`)}
+                  </motion.span>
+                )}
+              </>
+            )}
           </NavLink>
         ))}
       </nav>
+
+      {/* Language */}
       <LanguageToggle />
-    </aside>
+    </motion.aside>
   );
 }

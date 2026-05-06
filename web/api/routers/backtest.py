@@ -1,8 +1,9 @@
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -11,7 +12,16 @@ from web.api.services.task_manager import get_task_manager
 from web.api.services.chart_service import parse_equity_curve, parse_metrics, parse_drawdown, compare_runs
 from web.api.routers.system import stream_task
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _safe_path(base_dir: Path, filename: str) -> Path:
+    """Prevent path traversal — reject filenames containing '..' or starting with '/'."""
+    if ".." in filename or filename.startswith("/"):
+        raise HTTPException(status_code=403, detail="Invalid filename")
+    return base_dir / filename
 
 
 class GridSearchRequest(BaseModel):
@@ -61,7 +71,9 @@ async def start_grid_search(req: GridSearchRequest):
             argv.extend(["--slippage-multipliers", ",".join(str(x) for x in req.slippage_multipliers)])
         if req.markets:
             argv.extend(["--markets", ",".join(req.markets)])
-        subprocess.run(argv, check=False)
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            raise RuntimeError(f"Grid search failed (exit {result.returncode}): {result.stderr[-500:]}")
         return {"status": "completed"}
 
     task_id = await tm.start_sync_task("grid_search", _grid)
@@ -90,18 +102,18 @@ async def list_results():
 @router.get("/results/{filename}")
 async def get_result(filename: str):
     import pandas as pd
-    path = BACKTEST_RESULTS_DIR / filename
+    path = _safe_path(BACKTEST_RESULTS_DIR, filename)
     if not path.exists():
-        return {"error": "Not found"}
+        raise HTTPException(status_code=404, detail="Result file not found")
     df = pd.read_csv(path)
     return {"columns": list(df.columns), "rows": df.to_dict(orient="records")[:200]}
 
 
 @router.get("/charts/{filename}")
 async def get_chart(filename: str):
-    path = BACKTEST_RESULTS_DIR / filename
+    path = _safe_path(BACKTEST_RESULTS_DIR, filename)
     if not path.exists():
-        return {"error": "Not found"}
+        raise HTTPException(status_code=404, detail="Chart file not found")
     return FileResponse(str(path), media_type="image/png")
 
 
@@ -146,7 +158,9 @@ async def start_wfv(req: WFVRequest):
             cmd.extend(["--folds-config", req.folds_config])
         if req.train_config:
             cmd.extend(["--train-config", req.train_config])
-        subprocess.run(cmd, check=False)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            raise RuntimeError(f"Walk-forward validation failed (exit {result.returncode}): {result.stderr[-500:]}")
         return {"status": "completed"}
 
     task_id = await tm.start_sync_task("wfv", _wfv)
@@ -155,17 +169,29 @@ async def start_wfv(req: WFVRequest):
 
 @router.get("/results/{filename}/equity-curve")
 async def get_equity_curve(filename: str):
-    return parse_equity_curve(filename)
+    _safe_path(BACKTEST_RESULTS_DIR, filename)
+    try:
+        return parse_equity_curve(filename)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/results/{filename}/metrics")
 async def get_metrics(filename: str):
-    return parse_metrics(filename)
+    _safe_path(BACKTEST_RESULTS_DIR, filename)
+    result = parse_metrics(filename)
+    if not result:
+        raise HTTPException(status_code=404, detail="Metrics not found")
+    return result
 
 
 @router.get("/results/{filename}/drawdown")
 async def get_drawdown(filename: str):
-    return parse_drawdown(filename)
+    _safe_path(BACKTEST_RESULTS_DIR, filename)
+    try:
+        return parse_drawdown(filename)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 class CompareRequest(BaseModel):
@@ -174,4 +200,7 @@ class CompareRequest(BaseModel):
 
 @router.post("/compare")
 async def compare_backtest_runs(req: CompareRequest):
-    return compare_runs(req.filenames)
+    try:
+        return compare_runs(req.filenames)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

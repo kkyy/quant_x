@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { X, CheckCircle, XCircle, Info } from "lucide-react";
 import { clsx } from "clsx";
+import { motion, AnimatePresence } from "framer-motion";
 
 type ToastVariant = "success" | "error" | "info";
 
@@ -8,7 +9,15 @@ interface ToastItem {
   id: string;
   variant: ToastVariant;
   message: string;
+  createdAt: number;
 }
+
+const MAX_TOASTS = 5;
+const DISMISS_MS: Record<ToastVariant, number> = {
+  success: 3000,
+  error: 6000,
+  info: 4000,
+};
 
 let addToastFn: ((variant: ToastVariant, message: string) => void) | null = null;
 
@@ -21,7 +30,10 @@ export function ToastContainer() {
 
   const addToast = useCallback((variant: ToastVariant, message: string) => {
     const id = Math.random().toString(36).slice(2);
-    setToasts((prev) => [...prev, { id, variant, message }]);
+    setToasts((prev) => {
+      const next = [...prev, { id, variant, message, createdAt: Date.now() }];
+      return next.slice(-MAX_TOASTS);
+    });
   }, []);
 
   useEffect(() => {
@@ -35,67 +47,73 @@ export function ToastContainer() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setToasts((prev) => {
-        const cutoff = Date.now() - 3000;
-        return prev.filter((t) => {
-          // keep toasts without timestamp; auto-dismiss is handled below
-          return true;
-        });
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   return (
     <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
-      {toasts.map((t) => (
-        <ToastItem key={t.id} toast={t} onDismiss={remove} />
-      ))}
+      <AnimatePresence>
+        {toasts.map((t) => (
+          <ToastItem key={t.id} toast={t} onDismiss={remove} />
+        ))}
+      </AnimatePresence>
     </div>
   );
 }
 
 function ToastItem({
-  toast,
+  toast: t,
   onDismiss,
 }: {
   toast: ToastItem;
   onDismiss: (id: string) => void;
 }) {
   useEffect(() => {
-    const timer = setTimeout(() => onDismiss(toast.id), 3000);
+    const timer = setTimeout(() => onDismiss(t.id), DISMISS_MS[t.variant]);
     return () => clearTimeout(timer);
-  }, [toast.id, onDismiss]);
+  }, [t.id, t.variant, onDismiss]);
 
-  const variantClasses: Record<ToastVariant, string> = {
-    success: "bg-emerald-900 border-emerald-700 text-emerald-100",
-    error: "bg-red-900 border-red-700 text-red-100",
-    info: "bg-blue-900 border-blue-700 text-blue-100",
+  const accentMap: Record<ToastVariant, string> = {
+    success: "border-l-terminal-green",
+    error: "border-l-terminal-red",
+    info: "border-l-terminal-cyan",
+  };
+
+  const bgMap: Record<ToastVariant, string> = {
+    success: "bg-terminal-green-glow",
+    error: "bg-terminal-red-glow",
+    info: "bg-terminal-cyan-glow",
   };
 
   const Icon = {
     success: CheckCircle,
     error: XCircle,
     info: Info,
-  }[toast.variant];
+  }[t.variant];
+
+  const iconColor: Record<ToastVariant, string> = {
+    success: "text-terminal-green",
+    error: "text-terminal-red",
+    info: "text-terminal-cyan",
+  };
 
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, x: 40, scale: 0.95 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      exit={{ opacity: 0, x: 40, scale: 0.95 }}
+      transition={{ duration: 0.2 }}
       className={clsx(
-        "pointer-events-auto flex items-center gap-3 px-4 py-3 border rounded-lg shadow-xl min-w-72 max-w-sm",
-        variantClasses[toast.variant]
+        "pointer-events-auto flex items-center gap-3 px-4 py-3 border border-terminal-border border-l-2 rounded-sm shadow-2xl min-w-72 max-w-sm backdrop-blur-sm",
+        accentMap[t.variant],
+        bgMap[t.variant]
       )}
     >
-      <Icon size={16} className="flex-shrink-0" />
-      <span className="flex-1 text-sm">{toast.message}</span>
+      <Icon size={14} className={clsx("flex-shrink-0", iconColor[t.variant])} />
+      <span className="flex-1 text-xs font-mono text-terminal-text">{t.message}</span>
       <button
-        onClick={() => onDismiss(toast.id)}
-        className="flex-shrink-0 hover:opacity-70"
+        onClick={() => onDismiss(t.id)}
+        className="flex-shrink-0 text-terminal-text-dim hover:text-terminal-text transition-colors"
       >
-        <X size={14} />
+        <X size={12} />
       </button>
-    </div>
+    </motion.div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { clsx } from 'clsx';
 
 export interface SelectOption {
   value: string;
@@ -51,11 +52,6 @@ export function Select({
     }
   }, [open, searchable]);
 
-  const handleOpen = () => {
-    setOpen((v) => !v);
-    if (!open) setSearch('');
-  };
-
   const handleSelect = (val: string) => {
     onChange(val);
     setOpen(false);
@@ -63,48 +59,56 @@ export function Select({
   };
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div ref={containerRef} className={clsx("relative", className)}>
       <button
         type="button"
-        onClick={handleOpen}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-sm text-zinc-200 hover:border-zinc-600 transition-colors"
+        onClick={() => setOpen((v) => { if (!v) setSearch(''); return !v; })}
+        className={clsx(
+          "w-full flex items-center justify-between gap-2 px-3 py-2",
+          "bg-terminal-surface border border-terminal-border rounded-sm",
+          "text-xs font-mono",
+          selected ? "text-terminal-text" : "text-terminal-text-dim",
+          "hover:border-terminal-text-dim transition-colors focus-ring"
+        )}
       >
-        <span className={selected ? 'text-zinc-200' : 'text-zinc-500'}>
-          {selected ? selected.label : placeholder}
-        </span>
+        <span>{selected ? selected.label : placeholder}</span>
         <ChevronDown
-          className={`w-4 h-4 text-zinc-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={clsx(
+            "w-3.5 h-3.5 text-terminal-text-dim shrink-0 transition-transform",
+            open && "rotate-180"
+          )}
         />
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-md shadow-xl overflow-hidden">
+        <div className="absolute z-50 mt-1 w-full bg-terminal-surface border border-terminal-border rounded-sm shadow-2xl overflow-hidden">
           {searchable && (
-            <div className="p-2 border-b border-zinc-700">
+            <div className="p-2 border-b border-terminal-border-dim">
               <input
                 ref={inputRef}
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search..."
-                className="w-full px-2 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500"
+                className="w-full px-2 py-1.5 bg-terminal-bg border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green"
               />
             </div>
           )}
           <ul className="max-h-60 overflow-y-auto py-1">
             {filtered.length === 0 ? (
-              <li className="px-3 py-2 text-sm text-zinc-500">No options</li>
+              <li className="px-3 py-2 text-xs font-mono text-terminal-text-dim">NO OPTIONS</li>
             ) : (
               filtered.map((opt) => (
                 <li key={opt.value}>
                   <button
                     type="button"
                     onClick={() => handleSelect(opt.value)}
-                    className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                    className={clsx(
+                      "w-full text-left px-3 py-2 text-xs font-mono transition-colors",
                       opt.value === value
-                        ? 'bg-blue-600/20 text-blue-400'
-                        : 'text-zinc-300 hover:bg-zinc-700'
-                    }`}
+                        ? "bg-terminal-green-glow text-terminal-green"
+                        : "text-terminal-text hover:bg-terminal-raised"
+                    )}
                   >
                     {opt.label}
                   </button>

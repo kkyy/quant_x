@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 from quant_ex.features.base import FactorPipeline
@@ -19,7 +20,7 @@ _DEFAULT_TTL = 86400.0
 def _cached(key: str, ttl: float, factory: Callable[[], Any]) -> Any:
     now = time.time()
     expiry, data = _ttl_cache.get(key, (0.0, None))
-    if now < expiry:
+    if now <= expiry:
         return data
     result = factory()
     _ttl_cache[key] = (now + ttl, result)
@@ -47,7 +48,7 @@ def compute_factor_values(
     start: Optional[str] = None,
     end: Optional[str] = None,
 ) -> Dict:
-    cache_key = f"factors:{','.join(sorted(factor_names))}:{symbols}:{start}:{end}"
+    cache_key = f"factors:{','.join(sorted(factor_names))}:{sorted(symbols) if symbols else None}:{start}:{end}"
     return _cached(cache_key, _DEFAULT_TTL, lambda: _do_compute(factor_names, symbols, start, end))
 
 
@@ -68,7 +69,7 @@ def _do_compute(factor_names, symbols, start, end):
         return {"factors": factor_names, "data": []}
 
     df = result.reset_index()
-    if symbols and "instrument" in df.columns:
+    if symbols is not None and "instrument" in df.columns:
         df = df[df["instrument"].isin(symbols)]
 
     records = df.to_dict(orient="records")
@@ -145,8 +146,8 @@ def _do_ic(factor_name, horizon, window):
                     r[k] = v
             rolling_records.append(r)
 
-    ic_mean = float(decay_df["mean_rank_ic"].mean()) if not decay_df.empty and "mean_rank_ic" in decay_df.columns else 0
-    icir = float(decay_df["rank_icir"].mean()) if not decay_df.empty and "rank_icir" in decay_df.columns else 0
+    ic_mean = float(np.nan_to_num(decay_df["mean_rank_ic"].mean(), nan=0.0)) if not decay_df.empty and "mean_rank_ic" in decay_df.columns else 0
+    icir = float(np.nan_to_num(decay_df["rank_icir"].mean(), nan=0.0)) if not decay_df.empty and "rank_icir" in decay_df.columns else 0
 
     return {
         "factor": factor_name,

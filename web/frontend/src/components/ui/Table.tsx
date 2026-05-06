@@ -4,9 +4,10 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 export interface TableColumn<T> {
   key: keyof T | string;
   label: string;
-  render?: (value: unknown, row: T) => React.ReactNode;
+  render?: (row: T) => React.ReactNode;
   align?: 'left' | 'center' | 'right';
   sortable?: boolean;
+  mono?: boolean;
 }
 
 interface TableProps<T extends Record<string, unknown>> {
@@ -15,6 +16,7 @@ interface TableProps<T extends Record<string, unknown>> {
   pageSize?: number;
   onRowClick?: (row: T) => void;
   rowKey?: keyof T;
+  emptyMessage?: string;
 }
 
 type SortDir = 'asc' | 'desc' | null;
@@ -25,6 +27,7 @@ export function Table<T extends Record<string, unknown>>({
   pageSize = 20,
   onRowClick,
   rowKey,
+  emptyMessage = 'NO DATA',
 }: TableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
@@ -72,16 +75,16 @@ export function Table<T extends Record<string, unknown>>({
   };
 
   return (
-    <div className="flex flex-col gap-0 rounded-lg border border-zinc-800 overflow-hidden">
+    <div className="flex flex-col border border-terminal-border rounded-sm overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-zinc-800 border-b border-zinc-700">
+            <tr className="bg-terminal-raised border-b border-terminal-border">
               {columns.map((col) => (
                 <th
                   key={String(col.key)}
-                  className={`px-4 py-3 font-medium text-zinc-300 whitespace-nowrap ${alignClass(col.align)} ${
-                    col.sortable ? 'cursor-pointer select-none hover:text-white' : ''
+                  className={`px-3 py-2 font-mono font-medium text-terminal-text-dim text-xs uppercase tracking-wider whitespace-nowrap ${alignClass(col.align)} ${
+                    col.sortable ? 'cursor-pointer select-none hover:text-terminal-text-bright' : ''
                   }`}
                   onClick={col.sortable ? () => handleSort(String(col.key)) : undefined}
                 >
@@ -89,14 +92,14 @@ export function Table<T extends Record<string, unknown>>({
                     {col.label}
                     {col.sortable && sortKey === String(col.key) && (
                       sortDir === 'asc' ? (
-                        <ChevronUp className="w-3.5 h-3.5" />
+                        <ChevronUp className="w-3 h-3 text-terminal-green" />
                       ) : (
-                        <ChevronDown className="w-3.5 h-3.5" />
+                        <ChevronDown className="w-3 h-3 text-terminal-green" />
                       )
                     )}
                     {col.sortable && sortKey !== String(col.key) && (
-                      <span className="w-3.5 h-3.5 opacity-30">
-                        <ChevronUp className="w-3.5 h-3.5" />
+                      <span className="w-3 h-3 opacity-20">
+                        <ChevronUp className="w-3 h-3" />
                       </span>
                     )}
                   </span>
@@ -109,9 +112,9 @@ export function Table<T extends Record<string, unknown>>({
               <tr>
                 <td
                   colSpan={columns.length}
-                  className="px-4 py-8 text-center text-zinc-500"
+                  className="px-4 py-10 text-center text-terminal-text-dim font-mono text-xs"
                 >
-                  No data
+                  {emptyMessage}
                 </td>
               </tr>
             ) : (
@@ -124,8 +127,10 @@ export function Table<T extends Record<string, unknown>>({
                   <tr
                     key={key}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
-                    className={`border-b border-zinc-800 last:border-b-0 transition-colors ${
-                      onRowClick ? 'cursor-pointer hover:bg-zinc-800/60' : ''
+                    className={`border-b border-terminal-border-dim last:border-b-0 transition-colors ${
+                      onRowClick
+                        ? 'cursor-pointer hover:bg-terminal-raised hover:border-l-2 hover:border-l-terminal-green'
+                        : 'hover:bg-terminal-raised/50'
                     }`}
                   >
                     {columns.map((col) => {
@@ -133,9 +138,9 @@ export function Table<T extends Record<string, unknown>>({
                       return (
                         <td
                           key={String(col.key)}
-                          className={`px-4 py-2.5 text-zinc-300 ${alignClass(col.align)}`}
+                          className={`px-3 py-2 text-terminal-text ${alignClass(col.align)} ${col.mono !== false ? 'font-mono text-xs' : ''}`}
                         >
-                          {col.render ? col.render(raw, row) : String(raw ?? '')}
+                          {col.render ? col.render(row) : String(raw ?? '')}
                         </td>
                       );
                     })}
@@ -148,24 +153,23 @@ export function Table<T extends Record<string, unknown>>({
       </div>
 
       {data.length > pageSize && (
-        <div className="flex items-center justify-between px-4 py-2 bg-zinc-900 border-t border-zinc-800 text-xs text-zinc-400">
-          <span>
-            {start}-{end} of {sorted.length}
-          </span>
+        <div className="flex items-center justify-between px-3 py-2 bg-terminal-surface border-t border-terminal-border font-mono text-xs text-terminal-text-dim">
+          <span>{start}-{end} / {sorted.length}</span>
           <div className="flex gap-1">
             <button
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={page === 0}
-              className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-zinc-300"
+              className="px-2 py-0.5 border border-terminal-border hover:border-terminal-text-dim disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
-              Prev
+              PREV
             </button>
+            <span className="px-2 py-0.5">{page + 1}/{totalPages}</span>
             <button
               onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
               disabled={page >= totalPages - 1}
-              className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-zinc-300"
+              className="px-2 py-0.5 border border-terminal-border hover:border-terminal-text-dim disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
-              Next
+              NEXT
             </button>
           </div>
         </div>

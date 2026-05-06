@@ -1,3 +1,5 @@
+import { motion } from "framer-motion";
+
 interface TabsProps {
   tabs: { key: string; label: string }[];
   activeKey: string;
@@ -6,18 +8,25 @@ interface TabsProps {
 
 export function Tabs({ tabs, activeKey, onChange }: TabsProps) {
   return (
-    <div className="flex gap-1 p-1 bg-zinc-800/50 rounded-lg border border-zinc-800 w-fit">
+    <div className="flex border-b border-terminal-border">
       {tabs.map((tab) => (
         <button
           key={tab.key}
           onClick={() => onChange(tab.key)}
-          className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${
+          className={`relative px-4 py-2 text-xs font-mono font-medium tracking-wide transition-colors ${
             activeKey === tab.key
-              ? 'bg-blue-600 text-white'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+              ? "text-terminal-green"
+              : "text-terminal-text-dim hover:text-terminal-text"
           }`}
         >
           {tab.label}
+          {activeKey === tab.key && (
+            <motion.div
+              layoutId="tab-underline"
+              className="absolute bottom-0 left-0 right-0 h-[2px] bg-terminal-green"
+              transition={{ type: "spring", stiffness: 500, damping: 35 }}
+            />
+          )}
         </button>
       ))}
     </div>

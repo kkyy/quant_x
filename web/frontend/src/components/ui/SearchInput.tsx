@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Search } from 'lucide-react';
+import { clsx } from 'clsx';
 
 interface SearchInputProps {
   value: string;
@@ -32,14 +33,18 @@ export function SearchInput({
   }, [local, debounceMs, onChange, value]);
 
   return (
-    <div className={`relative ${className}`}>
-      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" />
+    <div className={clsx("relative", className)}>
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-terminal-text-dim pointer-events-none" />
       <input
         type="text"
         value={local}
         onChange={(e) => setLocal(e.target.value)}
         placeholder={placeholder}
-        className="w-full pl-9 pr-3 py-2 bg-zinc-800 border border-zinc-700 rounded-md text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500 transition-colors"
+        className={clsx(
+          "w-full pl-9 pr-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm",
+          "text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim",
+          "focus:outline-none focus:border-terminal-green transition-colors"
+        )}
       />
     </div>
   );

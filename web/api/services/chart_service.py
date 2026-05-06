@@ -45,22 +45,37 @@ def parse_equity_curve(filename: str) -> Dict:
     }
 
 
+_METRIC_COLUMNS = {
+    "annual_return", "sharpe", "max_drawdown", "calmar", "ic", "icir",
+    "rank_ic", "rank_icir", "win_rate", "turnover", "cum_return",
+    "annual_vol", "sortino",
+}
+
+
 def parse_metrics(filename: str) -> Dict:
     path = BACKTEST_RESULTS_DIR / filename
     if not path.exists():
         return {}
 
     df = pd.read_csv(path)
-    if "return" not in df.columns:
-        return {}
 
-    try:
-        from quant_ex.backtest.metrics import compute_metrics
-        metrics = compute_metrics(df)
-        return {k: round(v, 6) if isinstance(v, float) else v for k, v in metrics.items()}
-    except Exception as e:
-        logger.warning("compute_metrics failed for %s: %s", filename, e)
-        return {}
+    # Daily result files: compute metrics from return series
+    if "return" in df.columns:
+        try:
+            from quant_ex.backtest.metrics import compute_metrics
+            metrics = compute_metrics(df)
+            return {k: round(v, 6) if isinstance(v, float) else v for k, v in metrics.items()}
+        except Exception as e:
+            logger.warning("compute_metrics failed for %s: %s", filename, e)
+            return {}
+
+    # Grid-search summary files: extract metrics from the first row
+    present = _METRIC_COLUMNS & set(df.columns)
+    if present:
+        row = df.iloc[0]
+        return {k: round(float(row[k]), 6) for k in sorted(present) if pd.notna(row.get(k))}
+
+    return {}
 
 
 def parse_drawdown(filename: str) -> Dict:

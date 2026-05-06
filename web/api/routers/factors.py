@@ -1,12 +1,15 @@
+import logging
 from typing import Optional
 
 import pandas as pd
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from web.api.deps import get_config
 from web.api.services.factor_service import compute_factor_values, compute_ic_analysis
 from web.api.services.task_manager import get_task_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -25,9 +28,9 @@ class MineRequest(BaseModel):
 async def list_factors():
     from quant_ex.features.base import FactorRegistry
     try:
-        from quant_ex.models import trainer
-    except Exception:
-        pass
+        from quant_ex.models import trainer  # noqa: F401 — triggers model registration
+    except Exception as exc:
+        logger.warning("Failed to import trainer (model registration may be incomplete): %s", exc)
     factors = []
     for name in FactorRegistry.list():
         cls = FactorRegistry.get(name)
@@ -40,9 +43,9 @@ async def factor_library():
     from quant_ex.features.base import FactorRegistry
     config = get_config()
     try:
-        from quant_ex.models import trainer
-    except Exception:
-        pass
+        from quant_ex.models import trainer  # noqa: F401
+    except Exception as exc:
+        logger.warning("Failed to import trainer: %s", exc)
 
     enabled = set()
     for fc in config.get("model", {}).get("features", {}).get("factors", []):
@@ -58,8 +61,10 @@ async def factor_library():
 @router.post("/evaluate")
 async def evaluate_factor(req: EvaluateRequest):
     tm = get_task_manager()
+
     def _eval():
         return {"factor": req.name, "message": "evaluation not yet implemented in web mode"}
+
     task_id = await tm.start_sync_task("factor_eval", _eval)
     return {"task_id": task_id}
 
@@ -67,14 +72,18 @@ async def evaluate_factor(req: EvaluateRequest):
 @router.post("/mine")
 async def mine_factors(req: MineRequest):
     tm = get_task_manager()
+
     def _mine():
         import subprocess, sys
         cmd = [sys.executable, "run_factor_mining.py",
                "--min-ic", str(req.min_ic),
                "--min-icir", str(req.min_icir),
                "--top-n", str(req.top_n)]
-        subprocess.run(cmd, check=False)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            raise RuntimeError(f"Factor mining failed (exit {result.returncode}): {result.stderr[-500:]}")
         return {"status": "completed"}
+
     task_id = await tm.start_sync_task("factor_mine", _mine)
     return {"task_id": task_id}
 
@@ -107,7 +116,7 @@ async def factor_heatmap(
     end: Optional[str] = None,
 ):
     factor_list = [f.strip() for f in factors.split(",")]
-    result = compute_factor_values(factor_list, start=start, end=end)
+    result = compute_factor_values(factor_list, symbols=None, start=start, end=end)
     if not result["data"]:
         return {"factors": factor_list, "matrix": []}
     df = pd.DataFrame(result["data"])
@@ -117,3 +126,10 @@ async def factor_heatmap(
     corr = df[numeric_cols].corr().fillna(0).values.tolist()
     corr = [[round(float(v), 4) for v in row] for row in corr]
     return {"factors": numeric_cols, "matrix": corr}
+
+
+def _safe_path(base_dir, filename: str):
+    """Prevent path traversal — reject filenames containing '..' or starting with '/'."""
+    if ".." in filename or filename.startswith("/"):
+        raise HTTPException(status_code=403, detail="Invalid filename")
+    return base_dir / filename

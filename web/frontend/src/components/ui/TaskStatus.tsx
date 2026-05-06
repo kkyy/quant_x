@@ -51,18 +51,18 @@ export function TaskStatus({ taskId, onComplete, onError }: TaskStatusProps) {
   return (
     <div className="flex items-center gap-3 text-xs">
       {taskId ? (
-        <span className="font-mono text-zinc-400">task:{taskId.slice(0, 8)}</span>
+        <span className="font-mono text-terminal-text-dim">task:{taskId.slice(0, 8)}</span>
       ) : (
-        <span className="text-zinc-600">no task</span>
+        <span className="text-terminal-text-dim">no task</span>
       )}
       <Badge variant={statusVariant}>{statusLabel}</Badge>
       {lastEvent && (
-        <span className="text-zinc-500 truncate max-w-xs">
+        <span className="text-terminal-text-dim truncate max-w-xs">
           {lastEvent.type}: {JSON.stringify(lastEvent.data).slice(0, 60)}
         </span>
       )}
       {error && status === "error" && (
-        <span className="text-red-400 truncate max-w-xs">{error}</span>
+        <span className="text-terminal-red truncate max-w-xs">{error}</span>
       )}
     </div>
   );

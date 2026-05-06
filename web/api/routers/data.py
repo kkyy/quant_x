@@ -3,7 +3,7 @@ from datetime import datetime, date as date_mod
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from web.api.deps import CACHE_DIR, get_config
@@ -93,7 +93,7 @@ async def stream_fetch(task_id: str):
 async def delete_expired(data_type: str):
     registry = _get_fetcher_registry()
     if data_type not in registry:
-        return {"error": f"Unknown type: {data_type}"}
+        raise HTTPException(status_code=400, detail=f"Unknown type: {data_type}")
     _, cache_dir, ttl = registry[data_type]
     d = Path(cache_dir)
     if not d.exists():
@@ -101,7 +101,7 @@ async def delete_expired(data_type: str):
     deleted = 0
     for f in d.glob("*.csv"):
         mtime = date_mod.fromtimestamp(f.stat().st_mtime)
-        if (date_mod.today() - mtime).days >= ttl:
+        if (date_mod.today() - mtime).days > ttl:
             f.unlink()
             deleted += 1
     return {"deleted": deleted}
@@ -165,10 +165,74 @@ async def list_sectors():
 
 
 @router.get("/sectors/rotation")
-async def sector_rotation(windows: str = Query("1,5,20")):  # noqa: ARG001
-    # Placeholder: full implementation in Task 21
-    _ = windows
-    return []
+async def sector_rotation(windows: str = Query("1,5,20")):
+    from web.api.services.data_service import _qlib_loader, _cached
+
+    window_list = [int(w) for w in windows.split(",") if w.strip().isdigit()]
+
+    def _compute():
+        import pandas as pd
+        import numpy as np
+
+        sector_stocks_path = CACHE_DIR / "sector_stocks.json"
+        if not sector_stocks_path.exists():
+            return []
+
+        with open(sector_stocks_path) as f:
+            sector_data = json.load(f)
+
+        if not sector_data:
+            return []
+
+        loader = _qlib_loader()
+        if loader is None:
+            return []
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - __import__("datetime").timedelta(days=max(window_list) + 30)).strftime("%Y-%m-%d")
+
+        results = []
+        for sector_id, stocks in sector_data.items():
+            if not stocks:
+                continue
+            qlib_instruments = []
+            for s in stocks[:50]:
+                inst = s.replace("SH", "SH").replace("SZ", "SZ")
+                qlib_instruments.append(inst)
+
+            try:
+                price_data = loader.load(
+                    instruments=qlib_instruments,
+                    start_time=start,
+                    end_time=today,
+                    fields=["$close"],
+                )
+                if price_data is None or price_data.empty:
+                    continue
+
+                close = price_data["$close"].unstack(level=0) if hasattr(price_data["$close"], "unstack") else None
+                if close is None or close.empty:
+                    continue
+
+                sector_mean = close.mean(axis=1)
+                returns = {}
+                for w in window_list:
+                    if len(sector_mean) > w:
+                        ret = (sector_mean.iloc[-1] / sector_mean.iloc[-w - 1] - 1) if len(sector_mean) > w + 1 else 0.0
+                        returns[f"{w}d"] = round(float(ret), 4)
+
+                results.append({
+                    "sector_id": sector_id,
+                    "sector_name": sector_id,
+                    "returns": returns,
+                })
+            except Exception:
+                continue
+
+        return results
+
+    cache_key = f"sector_rotation_{windows}"
+    return _cached(cache_key, ttl=14400.0, factory=_compute)
 
 
 @router.get("/sectors/{sector_id}/stocks")

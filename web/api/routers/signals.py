@@ -1,13 +1,23 @@
+import logging
 import subprocess
 import sys
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from web.api.deps import PROJECT_ROOT, SIGNALS_DIR, get_config
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _safe_path(base_dir, filename: str):
+    """Prevent path traversal."""
+    if ".." in filename or filename.startswith("/"):
+        raise HTTPException(status_code=403, detail="Invalid filename")
+    return base_dir / filename
 
 
 @router.get("/regime")
@@ -81,7 +91,9 @@ async def run_rebalance(req: RebalanceRequest):
             cmd.append("--dry-run")
         if req.config:
             cmd.extend(["--config", req.config])
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_ROOT))
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=600)
+        if result.returncode != 0:
+            raise RuntimeError(f"Rebalance failed (exit {result.returncode}): {result.stderr[-500:]}")
         return {"stdout": result.stdout[-2000:], "returncode": result.returncode}
 
     task_id = await tm.start_sync_task("rebalance", _run)
@@ -102,7 +114,7 @@ async def send_notify_test(req: NotifyTestRequest):
         pusher.send(title=req.title, content=req.content)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history")
@@ -122,7 +134,7 @@ async def signal_history():
 
 @router.get("/history/{filename}")
 async def get_signal(filename: str):
-    path = SIGNALS_DIR / filename
+    path = _safe_path(SIGNALS_DIR, filename)
     if not path.exists():
-        return {"error": "Not found"}
+        raise HTTPException(status_code=404, detail="Signal file not found")
     return {"content": path.read_text(encoding="utf-8")}

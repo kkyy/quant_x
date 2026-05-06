@@ -10,6 +10,7 @@ import { DatePicker } from "../components/ui/DatePicker";
 import { NumberInput } from "../components/ui/NumberInput";
 import { TaskStatus } from "../components/ui/TaskStatus";
 import { EChartsWrapper } from "../components/ui/EChartsWrapper";
+import { Skeleton, SkeletonTable } from "../components/ui/Skeleton";
 import { get, post, fetchICAnalysis, fetchFactorHeatmap } from "../api/client";
 import type { ICDAnalysis, FactorHeatmap } from "../api/types";
 
@@ -27,7 +28,6 @@ interface FactorLibEntry {
 }
 
 function LibraryTab() {
-  const { t } = useTranslation();
   const [factors, setFactors] = useState<FactorLibEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -38,7 +38,7 @@ function LibraryTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <p className="text-zinc-500 text-sm">{t("common.loading")}</p>;
+  if (loading) return <SkeletonTable rows={8} />;
 
   return (
     <Table
@@ -88,70 +88,70 @@ function ICAnalysisTab() {
   const decayChartOption = result && result.decay.length > 0 ? {
     tooltip: { trigger: "axis" },
     grid: { left: 50, right: 20, top: 30, bottom: 40 },
-    xAxis: { type: "category", data: result.decay.map(d => `${d.horizon}d`), axisLine: { lineStyle: { color: "#374151" } }, axisLabel: { color: "#6b7280" } },
-    yAxis: { type: "value", splitLine: { lineStyle: { color: "#1f2937" } }, axisLabel: { color: "#6b7280" } },
+    xAxis: { type: "category", data: result.decay.map(d => `${d.horizon}d`), axisLine: { lineStyle: { color: "#27272a" } }, axisLabel: { color: "#71717a" } },
+    yAxis: { type: "value", splitLine: { lineStyle: { color: "#1e1e22" } }, axisLabel: { color: "#71717a" } },
     series: [{
       type: "line",
       data: result.decay.map(d => d.ic),
       smooth: true,
-      lineStyle: { color: "#3b82f6", width: 2 },
-      areaStyle: { color: "rgba(59,130,246,0.1)" },
-      itemStyle: { color: "#3b82f6" },
+      lineStyle: { color: "#22c55e", width: 2 },
+      areaStyle: { color: "rgba(34,197,94,0.1)" },
+      itemStyle: { color: "#22c55e" },
     }],
-    title: { text: "IC Decay", textStyle: { color: "#9ca3af", fontSize: 13 } },
+    title: { text: "IC Decay", textStyle: { color: "#71717a", fontSize: 13 } },
   } : undefined;
 
   const rollingChartOption = result && result.rolling.length > 0 ? {
     tooltip: { trigger: "axis" },
     grid: { left: 50, right: 20, top: 30, bottom: 50 },
-    xAxis: { type: "category", data: result.rolling.map(r => r.date), axisLine: { lineStyle: { color: "#374151" } }, axisLabel: { color: "#6b7280", fontSize: 10, rotate: 30 } },
-    yAxis: { type: "value", splitLine: { lineStyle: { color: "#1f2937" } }, axisLabel: { color: "#6b7280" } },
+    xAxis: { type: "category", data: result.rolling.map(r => r.date), axisLine: { lineStyle: { color: "#27272a" } }, axisLabel: { color: "#71717a", fontSize: 10, rotate: 30 } },
+    yAxis: { type: "value", splitLine: { lineStyle: { color: "#1e1e22" } }, axisLabel: { color: "#71717a" } },
     dataZoom: [{ type: "inside" }, { type: "slider", bottom: 10, height: 16 }],
     series: [{
       type: "line",
       data: result.rolling.map(r => r.ic),
-      lineStyle: { color: "#10b981", width: 1.5 },
+      lineStyle: { color: "#22c55e", width: 1.5 },
       symbol: "none",
     }],
-    title: { text: "Rolling IC", textStyle: { color: "#9ca3af", fontSize: 13 } },
+    title: { text: "Rolling IC", textStyle: { color: "#71717a", fontSize: 13 } },
   } : undefined;
 
   return (
     <div className="space-y-4">
       <div className="flex gap-3 items-end">
         <div className="w-48">
-          <p className="text-xs text-zinc-500 uppercase mb-1">{t("research.selectFactor")}</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">{t("research.selectFactor")}</p>
           <Select options={factorList} value={selectedFactor} onChange={setSelectedFactor} searchable />
         </div>
         <div>
-          <p className="text-xs text-zinc-500 uppercase mb-1">Horizon</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">Horizon</p>
           <NumberInput value={horizon} onChange={(v) => setHorizon(v ?? 5)} min={1} max={60} />
         </div>
         <div>
-          <p className="text-xs text-zinc-500 uppercase mb-1">Window</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">Window</p>
           <NumberInput value={window} onChange={(v) => setWindow(v ?? 20)} min={5} max={120} />
         </div>
         <button
           onClick={analyze}
           disabled={!selectedFactor}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-30"
+          className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
         >
           {t("research.analyze")}
         </button>
       </div>
 
-      {loading && <p className="text-zinc-500 text-sm">{t("common.loading")}</p>}
+      {loading && <Skeleton className="h-[320px] w-full" />}
 
       {result && (
         <>
           <div className="grid grid-cols-2 gap-4">
             <Card>
-              <p className="text-xs text-zinc-500 uppercase mb-1">{t("research.meanIC")}</p>
-              <p className="text-2xl font-bold text-zinc-100">{result.ic_mean}</p>
+              <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">{t("research.meanIC")}</p>
+              <p className="text-2xl font-bold text-terminal-green font-mono">{result.ic_mean}</p>
             </Card>
             <Card>
-              <p className="text-xs text-zinc-500 uppercase mb-1">{t("research.icir")}</p>
-              <p className="text-2xl font-bold text-zinc-100">{result.icir}</p>
+              <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">{t("research.icir")}</p>
+              <p className="text-2xl font-bold text-terminal-cyan font-mono">{result.icir}</p>
             </Card>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -165,7 +165,6 @@ function ICAnalysisTab() {
 }
 
 function HeatmapTab() {
-  const { t } = useTranslation();
   const [factorList, setFactorList] = useState<{ value: string; label: string }[]>([]);
   const [selectedFactors, setSelectedFactors] = useState<string[]>([]);
   const [startDate, setStartDate] = useState("");
@@ -191,17 +190,17 @@ function HeatmapTab() {
   const heatmapOption = result && result.factors.length > 0 ? {
     tooltip: { position: "top" },
     grid: { left: 80, right: 30, top: 10, bottom: 50 },
-    xAxis: { type: "category", data: result.factors, axisLabel: { color: "#6b7280", fontSize: 10, rotate: 30 } },
-    yAxis: { type: "category", data: result.factors, axisLabel: { color: "#6b7280", fontSize: 10 } },
+    xAxis: { type: "category", data: result.factors, axisLabel: { color: "#71717a", fontSize: 10, rotate: 30 }, axisLine: { lineStyle: { color: "#27272a" } } },
+    yAxis: { type: "category", data: result.factors, axisLabel: { color: "#71717a", fontSize: 10 }, axisLine: { lineStyle: { color: "#27272a" } } },
     visualMap: {
       min: -1, max: 1,
-      inRange: { color: ["#7f1d1d", "#1f2937", "#065f46"] },
-      textStyle: { color: "#9ca3af" },
+      inRange: { color: ["#7f1d1d", "#18181b", "#065f46"] },
+      textStyle: { color: "#71717a" },
     },
     series: [{
       type: "heatmap",
       data: result.matrix.flatMap((row, i) => row.map((val, j) => [j, i, val])),
-      label: { show: true, fontSize: 9, color: "#d1d5db", formatter: (p: any) => p.data[2].toFixed(2) },
+      label: { show: true, fontSize: 9, color: "#c8ccd0", formatter: (p: any) => p.data[2].toFixed(2) },
     }],
   } : undefined;
 
@@ -209,7 +208,7 @@ function HeatmapTab() {
     <div className="space-y-4">
       <div className="flex gap-3 items-end">
         <div className="w-72">
-          <p className="text-xs text-zinc-500 uppercase mb-1">Factors (select 2+)</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">Factors (select 2+)</p>
           <MultiSelect options={factorList} values={selectedFactors} onChange={setSelectedFactors} placeholder="Select factors..." />
         </div>
         <DatePicker value={startDate} onChange={setStartDate} />
@@ -217,12 +216,12 @@ function HeatmapTab() {
         <button
           onClick={generate}
           disabled={selectedFactors.length < 2}
-          className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-30"
+          className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
         >
           Generate
         </button>
       </div>
-      {loading && <p className="text-zinc-500 text-sm">{t("common.loading")}</p>}
+      {loading && <Skeleton className="h-[400px] w-full" />}
       {heatmapOption && <EChartsWrapper option={heatmapOption} height={400} />}
     </div>
   );
@@ -248,22 +247,22 @@ function MiningTab() {
     <div className="space-y-4 max-w-lg">
       <div className="grid grid-cols-3 gap-4">
         <div>
-          <p className="text-xs text-zinc-500 uppercase mb-1">{t("research.minIC")}</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">{t("research.minIC")}</p>
           <NumberInput value={minIC} onChange={(v) => setMinIC(v ?? 0.03)} step={0.01} min={0} />
         </div>
         <div>
-          <p className="text-xs text-zinc-500 uppercase mb-1">{t("research.minICIR")}</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">{t("research.minICIR")}</p>
           <NumberInput value={minICIR} onChange={(v) => setMinICIR(v ?? 0.4)} step={0.1} min={0} />
         </div>
         <div>
-          <p className="text-xs text-zinc-500 uppercase mb-1">{t("research.topN")}</p>
+          <p className="text-xs text-terminal-text-dim uppercase mb-1 font-mono tracking-wider">{t("research.topN")}</p>
           <NumberInput value={topN} onChange={(v) => setTopN(v ?? 30)} min={1} max={100} />
         </div>
       </div>
       <button
         onClick={startMining}
         disabled={submitting}
-        className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-30"
+        className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
       >
         {submitting ? t("common.starting") : t("research.startMining")}
       </button>
@@ -277,9 +276,9 @@ export function ResearchPage() {
   const [activeTab, setActiveTab] = useState("library");
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-zinc-100">{t("research.title")}</h1>
+        <h1 className="text-sm font-mono font-semibold text-terminal-text-bright uppercase tracking-wider">{t("research.title")}</h1>
         <Tabs tabs={RESEARCH_TABS} activeKey={activeTab} onChange={setActiveTab} />
       </div>
 

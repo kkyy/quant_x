@@ -48,17 +48,23 @@ export function MultiSelect({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="w-full min-h-10 px-3 py-2 text-left bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-300 hover:border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-500 flex flex-wrap gap-1 items-center"
+        className={clsx(
+          "w-full min-h-9 px-3 py-2 text-left",
+          "bg-terminal-surface border border-terminal-border rounded-sm",
+          "text-xs font-mono",
+          "hover:border-terminal-text-dim focus:outline-none focus:border-terminal-green",
+          "flex flex-wrap gap-1 items-center transition-colors"
+        )}
       >
         {values.length === 0 ? (
-          <span className="text-zinc-500">{placeholder}</span>
+          <span className="text-terminal-text-dim">{placeholder}</span>
         ) : (
           values.map((v) => {
             const opt = options.find((o) => o.value === v);
             return (
               <span
                 key={v}
-                className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-600 text-white text-xs rounded-full"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-terminal-green-glow border border-terminal-green/30 text-terminal-green text-[10px] rounded-sm"
               >
                 {opt?.label ?? v}
                 <button
@@ -67,7 +73,7 @@ export function MultiSelect({
                     e.stopPropagation();
                     toggle(v);
                   }}
-                  className="hover:text-blue-200"
+                  className="hover:text-white transition-colors"
                 >
                   <X size={10} />
                 </button>
@@ -78,7 +84,7 @@ export function MultiSelect({
       </button>
 
       {open && (
-        <div className="absolute z-50 w-full mt-1 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+        <div className="absolute z-50 w-full mt-1 bg-terminal-surface border border-terminal-border rounded-sm shadow-2xl max-h-60 overflow-y-auto">
           {options.map((opt) => {
             const selected = values.includes(opt.value);
             return (
@@ -86,22 +92,18 @@ export function MultiSelect({
                 key={opt.value}
                 type="button"
                 onClick={() => toggle(opt.value)}
-                className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-700 flex items-center gap-2 text-zinc-300"
+                className="w-full px-3 py-2 text-left text-xs font-mono hover:bg-terminal-raised flex items-center gap-2 text-terminal-text"
               >
                 <span
                   className={clsx(
-                    "w-4 h-4 border rounded flex items-center justify-center flex-shrink-0",
+                    "w-3.5 h-3.5 border rounded-sm flex items-center justify-center flex-shrink-0",
                     selected
-                      ? "bg-blue-600 border-blue-600"
-                      : "border-zinc-600 bg-transparent"
+                      ? "bg-terminal-green border-terminal-green"
+                      : "border-terminal-border bg-transparent"
                   )}
                 >
                   {selected && (
-                    <svg
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      className="w-3 h-3 text-white"
-                    >
+                    <svg viewBox="0 0 12 12" fill="none" className="w-2.5 h-2.5 text-terminal-bg">
                       <path
                         d="M2 6l3 3 5-5"
                         stroke="currentColor"

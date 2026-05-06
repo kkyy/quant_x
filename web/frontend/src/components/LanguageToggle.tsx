@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { clsx } from 'clsx';
 
 export function LanguageToggle() {
   const { i18n } = useTranslation();
@@ -9,18 +10,19 @@ export function LanguageToggle() {
   };
 
   return (
-    <div className="flex gap-1 p-3 border-t border-zinc-800">
-      {(['zh', 'en'] as const).map((lang) => (
+    <div className="flex border-t border-terminal-border-dim">
+      {(['en', 'zh'] as const).map((lang) => (
         <button
           key={lang}
           onClick={() => toggle(lang)}
-          className={`flex-1 py-1.5 text-xs font-medium rounded transition-colors ${
-            i18n.language.startsWith(lang)
-              ? 'bg-amber-500 text-zinc-900'
-              : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
-          }`}
+          className={clsx(
+            "flex-1 py-2 text-[10px] font-mono font-medium uppercase tracking-wider transition-colors",
+            i18n.language === lang
+              ? "text-terminal-green bg-terminal-green-glow"
+              : "text-terminal-text-dim hover:text-terminal-text"
+          )}
         >
-          {lang === 'zh' ? '中文' : 'EN'}
+          {lang === 'zh' ? '中' : 'EN'}
         </button>
       ))}
     </div>

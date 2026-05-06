@@ -132,6 +132,8 @@
   },
   "backtest": {
     "title": "回测",
+    "launchTab": "启动",
+    "compareTab": "对比",
     "gridTab": "网格搜索",
     "resultsTab": "结果",
     "wfvTab": "滚动验证",
@@ -150,13 +152,16 @@
     "trainUniverses": "训练股票池（逗号分隔）",
     "evalMarket": "评估市场",
     "workers": "并行数",
-    "runWfv": "运行滚动验证"
+    "runWfv": "运行滚动验证",
+    "noCurveData": "该结果文件无净值曲线数据（可能是网格搜索汇总文件）。"
   },
   "signals": {
     "title": "信号",
     "generateTab": "生成信号",
+    "dailyTab": "每日信号",
     "historyTab": "历史记录",
     "rebalanceTab": "再平衡",
+    "regimeTab": "市场状态",
     "notificationTab": "通知测试",
     "model": "模型",
     "noModels": "未找到模型",
@@ -226,6 +231,7 @@
   "system": {
     "title": "系统",
     "runtimeTab": "运行时",
+    "tasksTab": "任务",
     "logsTab": "日志",
     "cacheTab": "缓存",
     "pythonVersion": "Python 版本",

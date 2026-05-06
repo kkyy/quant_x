@@ -1,7 +1,98 @@
 @import "tailwindcss";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/600.css";
+@import "@fontsource/dm-sans/400.css";
+@import "@fontsource/dm-sans/500.css";
+@import "@fontsource/dm-sans/600.css";
+
+@theme {
+  --color-terminal-bg: #0a0a0c;
+  --color-terminal-surface: #111114;
+  --color-terminal-raised: #18181b;
+  --color-terminal-border: #27272a;
+  --color-terminal-border-dim: #1e1e22;
+  --color-terminal-text: #c8ccd0;
+  --color-terminal-text-dim: #71717a;
+  --color-terminal-text-bright: #e4e4e7;
+  --color-terminal-green: #22c55e;
+  --color-terminal-green-dim: #16a34a;
+  --color-terminal-green-glow: rgba(34, 197, 94, 0.15);
+  --color-terminal-amber: #f59e0b;
+  --color-terminal-amber-glow: rgba(245, 158, 11, 0.15);
+  --color-terminal-red: #ef4444;
+  --color-terminal-red-glow: rgba(239, 68, 68, 0.15);
+  --color-terminal-cyan: #06b6d4;
+  --color-terminal-cyan-glow: rgba(6, 182, 212, 0.15);
+  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
 
 body {
-  background-color: #fafafa;
-  color: #18181b;
-  font-family: system-ui, -apple-system, sans-serif;
+  background-color: var(--color-terminal-bg);
+  color: var(--color-terminal-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background-color: rgba(34, 197, 94, 0.25);
+  color: #e4e4e7;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Date input dark scheme */
+input[type="date"] {
+  color-scheme: dark;
+}
+
+/* Number input spinner hide */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Focus ring utility */
+.focus-ring {
+  outline: none;
+}
+.focus-ring:focus {
+  box-shadow: 0 0 0 1px var(--color-terminal-border), 0 0 0 2px var(--color-terminal-green);
+}
+
+/* Shimmer animation for skeletons */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-terminal-surface) 25%,
+    var(--color-terminal-raised) 37%,
+    var(--color-terminal-surface) 63%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
 }

@@ -1,17 +1,39 @@
+import { clsx } from "clsx";
+
+type CardAccent = "green" | "amber" | "red" | "cyan" | "default";
+
 interface CardProps {
   title?: string;
   children: React.ReactNode;
   actions?: React.ReactNode;
+  accent?: CardAccent;
   className?: string;
 }
 
-export function Card({ title, children, actions, className = '' }: CardProps) {
+const accentMap: Record<CardAccent, string> = {
+  green: "border-t-terminal-green",
+  amber: "border-t-terminal-amber",
+  red: "border-t-terminal-red",
+  cyan: "border-t-terminal-cyan",
+  default: "",
+};
+
+export function Card({ title, children, actions, accent = "default", className = "" }: CardProps) {
   return (
-    <div className={`bg-zinc-900 border border-zinc-800 rounded-lg ${className}`}>
+    <div
+      className={clsx(
+        "bg-terminal-surface border border-terminal-border rounded-sm",
+        accent !== "default" && "border-t-2",
+        accentMap[accent],
+        className
+      )}
+    >
       {(title || actions) && (
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-terminal-border-dim">
           {title && (
-            <h3 className="text-sm font-semibold text-zinc-200">{title}</h3>
+            <h3 className="text-xs font-mono font-medium text-terminal-text-dim uppercase tracking-wider">
+              {title}
+            </h3>
           )}
           {actions && <div className="flex items-center gap-2">{actions}</div>}
         </div>
