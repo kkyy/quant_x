@@ -48,6 +48,16 @@
     "evaluate": "评估",
     "selectFile": "选择文件查看内容"
   },
+  "overview": {
+    "title": "总览",
+    "trainModel": "训练模型",
+    "trainModelDesc": "选择模型和因子进行训练",
+    "runBacktest": "运行回测",
+    "runBacktestDesc": "网格搜索和策略对比",
+    "generateSignals": "生成信号",
+    "generateSignalsDesc": "每日信号和再平衡",
+    "recentTasks": "最近任务"
+  },
   "dashboard": {
     "title": "Dashboard",
     "python": "Python",

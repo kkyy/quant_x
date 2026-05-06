@@ -48,6 +48,16 @@
     "evaluate": "Evaluate",
     "selectFile": "Select a file to view content"
   },
+  "overview": {
+    "title": "Overview",
+    "trainModel": "Train Model",
+    "trainModelDesc": "Select model and factors to train",
+    "runBacktest": "Run Backtest",
+    "runBacktestDesc": "Grid search and strategy comparison",
+    "generateSignals": "Generate Signals",
+    "generateSignalsDesc": "Daily signals and rebalance",
+    "recentTasks": "Recent Tasks"
+  },
   "dashboard": {
     "title": "Dashboard",
     "python": "Python",
