@@ -165,7 +165,9 @@ async def list_sectors():
 
 
 @router.get("/sectors/rotation")
-async def sector_rotation(windows: str = Query("1,5,20")):
+async def sector_rotation(windows: str = Query("1,5,20")):  # noqa: ARG001
+    # Placeholder: full implementation in Task 21
+    _ = windows
     return []
 
 

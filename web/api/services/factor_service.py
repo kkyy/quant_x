@@ -7,14 +7,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from quant_ex.data.loader import DataLoader
 from quant_ex.features.base import FactorPipeline
 from quant_ex.backtest.signal_diagnostics import compute_ic_decay, compute_rolling_ic
-from quant_ex.utils.config import load_config
 
 logger = logging.getLogger(__name__)
 
-_config = load_config()
 _ttl_cache: Dict[str, Tuple[float, Any]] = {}
 _DEFAULT_TTL = 86400.0
 
