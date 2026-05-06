@@ -67,3 +67,4 @@ daily_rebalance:
   # the signal day, without carrying a long historical replay from 2024.
   start_date: "previous_trade_date"
   model_path: "models/lgbm_universe-csi1000_20260428_155547.pkl"
+  min_action_value: 1000

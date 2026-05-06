@@ -90,6 +90,58 @@ def daily_zscore(pred: pd.Series) -> pd.Series:
     return ((pred - mean) / std).fillna(0.0)
 
 
+def _compute_market_drawdown(
+    price_data: pd.DataFrame,
+    drawdown_window: int = 120,
+) -> pd.Series:
+    """Compute equal-weight index drawdown from rolling high.
+
+    Returns pd.Series indexed by datetime, values <= 0.
+    """
+    close_col = "real_close" if "real_close" in price_data.columns else "$close"
+    close = (
+        price_data[close_col]
+        .reset_index()
+        .pivot(index="datetime", columns="instrument", values=close_col)
+        .sort_index()
+    )
+    idx_level = close.mean(axis=1)
+    roll_high = idx_level.rolling(drawdown_window, min_periods=1).max()
+    drawdown = (idx_level / roll_high - 1.0).clip(upper=0.0)
+    return drawdown
+
+
+def _apply_svs_filter_core(
+    pred: pd.Series,
+    factor_rank: pd.Series,
+    effective_mode: str,
+    keep_top_pct: float,
+    effective_weight: float,
+) -> pd.Series:
+    """Core SVS filter logic, extracted for reuse by drawdown gating."""
+    if effective_mode == "hard_filter":
+        threshold = 1.0 - keep_top_pct
+        keep = factor_rank.reindex(pred.index) >= threshold
+        filtered = pred[keep.fillna(False)]
+        return filtered if not filtered.empty else pred
+
+    svs_rank_aligned = factor_rank.reindex(pred.index)
+
+    if effective_mode == "multiplicative_weight":
+        blended = pred * (1.0 - effective_weight + effective_weight * svs_rank_aligned)
+        return daily_rank(blended, pct=True)
+
+    if effective_mode == "residual_add":
+        blended = pred + effective_weight * svs_rank_aligned
+        return daily_rank(blended, pct=True)
+
+    # Fallback to hard_filter
+    threshold = 1.0 - keep_top_pct
+    keep = factor_rank.reindex(pred.index) >= threshold
+    filtered = pred[keep.fillna(False)]
+    return filtered if not filtered.empty else pred
+
+
 def apply_stock_vs_sector_filter(
     pred: pd.Series,
     config: dict,
@@ -120,6 +172,8 @@ def apply_stock_vs_sector_filter(
               keep_top_pct: 0.4
               mode: "hard_filter"            # or "multiplicative_weight" / "residual_add"
               weight_strength: 0.5           # blend strength for soft modes
+              drawdown_threshold: -0.10      # disable SVS when market drawdown exceeds this
+              drawdown_window: 120           # rolling high window for drawdown calculation
 
     Parameters
     ----------
@@ -212,62 +266,75 @@ def apply_stock_vs_sector_filter(
         ):
             factor_rank = factor_rank.reorder_levels(pred.index.names)
 
-        # ── Hard filter mode (original behaviour) ─────────────────────────────
-        if effective_mode == "hard_filter":
-            threshold = 1.0 - keep_top_pct
-            keep = factor_rank.reindex(pred.index) >= threshold
-            filtered = pred[keep.fillna(False)]
-            if filtered.empty:
-                logger.warning(
-                    "stock_vs_sector_filter removed all signal rows "
-                    "(window=%s, keep_top_pct=%s); returning unfiltered signal",
-                    window,
-                    keep_top_pct,
-                )
+        # ── Drawdown-gated SVS: per-day switching ────────────────────────────
+        drawdown_threshold = cfg.get("drawdown_threshold", None)
+        if drawdown_threshold is not None:
+            dd_window = int(cfg.get("drawdown_window", 120))
+            dd_series = _compute_market_drawdown(price_data, dd_window)
+            dd_threshold = float(drawdown_threshold)
+
+            strong_dates = set(dd_series[dd_series > dd_threshold].index)
+            weak_dates = set(dd_series[dd_series <= dd_threshold].index)
+
+            pred_dates = pred.index.get_level_values("datetime")
+            # Dates not in drawdown series (warmup) default to strong
+            missing = set(pred_dates.unique()) - strong_dates - weak_dates
+            if missing:
+                strong_dates.update(missing)
+
+            pred_strong = pred[pred_dates.isin(strong_dates)]
+            pred_weak = pred[pred_dates.isin(weak_dates)]
+
+            n_strong = len(pred_strong)
+            n_weak = len(pred_weak)
+            logger.info(
+                "drawdown_gated_svs: %d strong-market rows, %d weak-market rows "
+                "(threshold=%.0f%%, window=%d)",
+                n_strong, n_weak, dd_threshold * 100, dd_window,
+            )
+
+            if pred_strong.empty:
+                logger.info("drawdown_gated_svs: all dates in drawdown, returning unfiltered signal")
                 return pred
 
+            result_strong = _apply_svs_filter_core(
+                pred_strong, factor_rank, effective_mode, keep_top_pct, effective_weight,
+            )
+
+            if pred_weak.empty:
+                logger.info(
+                    "stock_vs_sector_filter kept %d/%d (drawdown_gated, no weak dates)",
+                    len(result_strong), len(pred),
+                )
+                return result_strong
+
+            result = pd.concat([result_strong, pred_weak]).sort_index(kind="mergesort")
+            logger.info(
+                "stock_vs_sector_filter: %d strong (SVS) + %d weak (baseline) = %d total "
+                "(drawdown_gated, window=%s, keep_top_pct=%.2f, mode=%s)",
+                len(result_strong), len(pred_weak), len(result),
+                window, keep_top_pct, effective_mode,
+            )
+            return result
+
+        # ── No drawdown gating: apply SVS uniformly ──────────────────────────
+        result = _apply_svs_filter_core(
+            pred, factor_rank, effective_mode, keep_top_pct, effective_weight,
+        )
+        if effective_mode == "hard_filter":
             logger.info(
                 "stock_vs_sector_filter kept %d/%d signal rows "
                 "(window=%s, keep_top_pct=%.2f, mode=hard_filter)",
-                len(filtered),
-                len(pred),
-                window,
-                keep_top_pct,
+                len(result), len(pred),
+                window, keep_top_pct,
             )
-            return filtered
-
-        # ── Soft weighting modes ──────────────────────────────────────────────
-        svs_rank_aligned = factor_rank.reindex(pred.index)
-
-        if effective_mode == "multiplicative_weight":
-            # score_weighted = pred * (1 - weight_strength + weight_strength * svs_rank)
-            blended = pred * (1.0 - effective_weight + effective_weight * svs_rank_aligned)
-            result = daily_rank(blended, pct=True)
+        else:
             logger.info(
-                "stock_vs_sector_filter applied multiplicative_weight "
+                "stock_vs_sector_filter applied %s "
                 "(window=%s, weight_strength=%.2f)",
-                window,
-                effective_weight,
+                effective_mode, window, effective_weight,
             )
-            return result
-
-        if effective_mode == "residual_add":
-            # score_blended = pred + weight_strength * svs_rank
-            blended = pred + effective_weight * svs_rank_aligned
-            result = daily_rank(blended, pct=True)
-            logger.info(
-                "stock_vs_sector_filter applied residual_add "
-                "(window=%s, weight_strength=%.2f)",
-                window,
-                effective_weight,
-            )
-            return result
-
-        # Should not reach here, but fallback to hard_filter for safety
-        threshold = 1.0 - keep_top_pct
-        keep = factor_rank.reindex(pred.index) >= threshold
-        filtered = pred[keep.fillna(False)]
-        return filtered if not filtered.empty else pred
+        return result
 
     except Exception as exc:
         logger.warning("stock_vs_sector_filter failed: %s; skipped", exc)

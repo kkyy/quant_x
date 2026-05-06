@@ -85,6 +85,25 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Default: daily_rebalance.notify_channel or bark.",
     )
+    parser.add_argument(
+        "--positions",
+        type=str,
+        default=None,
+        help="实际持仓覆盖，格式: SH600489:900,SH600900:900。用于从真实持仓计算调仓差分，避免回测模拟持仓与实际不符。",
+    )
+    parser.add_argument(
+        "--position-date",
+        type=str,
+        default=None,
+        help="--positions 持仓的建仓日期，用于计算 hold_thresh 保护期。"
+             "默认为上一个交易日。格式: 2026-04-29。",
+    )
+    parser.add_argument(
+        "--min-action-value",
+        type=float,
+        default=None,
+        help="忽略金额低于此阈值（元）的调仓动作，过滤价格微变导致的噪音手数调整。建议设 500~1000。",
+    )
     return parser.parse_args()
 
 
@@ -104,6 +123,11 @@ def _daily_cfg(config: dict, args: argparse.Namespace) -> Dict[str, Any]:
     cfg["notify_channel"] = args.notify_channel or cfg.get("notify_channel", "bark")
     cfg["notify_on_skip"] = bool(args.notify_skip or cfg.get("notify_on_skip", False))
     cfg["create_update_tarball"] = bool(args.create_update_tarball or cfg.get("create_update_tarball", False))
+    cfg["min_action_value"] = (
+        args.min_action_value if args.min_action_value is not None
+        else float(cfg.get("min_action_value", 0))
+    )
+    cfg["position_date"] = args.position_date if args.position_date is not None else cfg.get("position_date")
     cfg["cache_dir"] = cfg.get("cache_dir") or "signals/daily_rebalance_cache"
     cfg["reminder_rebuild_on_miss"] = bool(
         cfg.get("reminder_rebuild_on_miss", True) and not args.no_reminder_rebuild
@@ -353,6 +377,26 @@ def _convert_snapshot_to_actual_prices(
     return converted
 
 
+def _parse_positions_arg(positions_str: str, trade_date: str) -> Dict[str, Dict[str, float]]:
+    """Parse --positions 'SH600489:900,SH600900:900' into a snapshot dict with actual prices."""
+    result: Dict[str, Dict[str, float]] = {}
+    for item in positions_str.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"--positions 格式错误: {item!r}，期望 INSTRUMENT:SHARES")
+        inst = parts[0].strip().upper()
+        try:
+            shares = float(parts[1].strip())
+        except ValueError:
+            raise ValueError(f"--positions 股数解析失败: {item!r}")
+        price = _load_actual_close(inst, trade_date) or 0.0
+        result[inst] = {"shares": shares, "price": price, "value": shares * price}
+    return result
+
+
 def _sorted_position_items(positions: dict) -> List[Tuple[pd.Timestamp, Any]]:
     items = [(pd.to_datetime(date), value) for date, value in positions.items()]
     return sorted(items, key=lambda item: item[0])
@@ -385,7 +429,71 @@ def _diff_positions(
     return actions
 
 
-def _run_real_rebalance(config: dict, cfg: Dict[str, Any], trade_date: str, next_trade_date: str) -> str:
+def _count_trading_days_held(
+    position_date: pd.Timestamp,
+    trade_date: pd.Timestamp,
+    trading_calendar: List[pd.Timestamp],
+) -> int:
+    """Count trading days strictly between position_date and trade_date (exclusive of trade_date)."""
+    return sum(1 for d in trading_calendar if position_date <= d < trade_date)
+
+
+def _apply_hold_protection(
+    actions: List[RebalanceAction],
+    target: Dict[str, Dict[str, float]],
+    actual_positions: Dict[str, Dict[str, float]],
+    position_date: pd.Timestamp,
+    trade_date: pd.Timestamp,
+    hold_thresh: int,
+    trading_calendar: List[pd.Timestamp],
+    topk: int = 5,
+) -> Tuple[List[RebalanceAction], Dict[str, Dict[str, float]]]:
+    """过滤掉还在 hold_thresh 保护期内的卖出/减仓动作，并重建 target。
+
+    受保护的持仓占用 topk 名额；剩余名额才允许买入新标的，
+    避免总仓位超过 topk 上限。
+    """
+    days_held = _count_trading_days_held(position_date, trade_date, trading_calendar)
+    if days_held >= hold_thresh:
+        return actions, target  # 保护期已过，不做任何干预
+
+    protected = set(actual_positions.keys())
+    remaining_slots = max(0, topk - len(protected))
+
+    # 新 target：先放所有受保护的持仓（保留实际手数）
+    new_target: Dict[str, Dict[str, float]] = {}
+    for inst in protected:
+        new_target[inst] = dict(actual_positions[inst])
+
+    # 再从策略选出的 target 里补充空余名额（按原 target 顺序）
+    for inst, info in target.items():
+        if inst in protected:
+            continue  # 已收录
+        if remaining_slots <= 0:
+            break
+        new_target[inst] = info
+        remaining_slots -= 1
+
+    # 用实际持仓重新计算 diff
+    new_actions = _diff_positions(actual_positions, new_target)
+
+    if protected:
+        logger.info(
+            "hold 保护: %s 已持有 %d 个交易日 (< hold_thresh=%d)，"
+            "保留全部原始持仓，新买入名额=%d。",
+            sorted(protected), days_held, hold_thresh, max(0, topk - len(protected)),
+        )
+    return new_actions, new_target
+
+
+def _run_real_rebalance(
+    config: dict,
+    cfg: Dict[str, Any],
+    trade_date: str,
+    next_trade_date: str,
+    actual_positions: Optional[Dict[str, Dict[str, float]]] = None,
+    trading_calendar: Optional[List[pd.Timestamp]] = None,
+) -> str:
     model = _load_model(config, cfg.get("model_path", ""))
     data_loader = DataLoader(config)
     universe_filter = UniverseFilter(config.get("strategy", {}))
@@ -415,10 +523,47 @@ def _run_real_rebalance(config: dict, cfg: Dict[str, Any], trade_date: str, next
     if not position_items:
         raise RuntimeError("回测没有返回 position 数据。")
     latest_dt, latest_obj = position_items[-1]
-    prev_obj = position_items[-2][1] if len(position_items) > 1 else {}
     target = _convert_snapshot_to_actual_prices(_snapshot(latest_obj), trade_date)
-    previous = _convert_snapshot_to_actual_prices(_snapshot(prev_obj), trade_date)
+    # 若用户传入了 --positions，用真实持仓做差分；否则回退到回测模拟的前一日持仓。
+    if actual_positions is not None:
+        logger.info("使用 --positions 实际持仓作为调仓差分基准（共 %d 只）。", len(actual_positions))
+        previous = actual_positions
+    else:
+        prev_obj = position_items[-2][1] if len(position_items) > 1 else {}
+        previous = _convert_snapshot_to_actual_prices(_snapshot(prev_obj), trade_date)
     actions = _diff_positions(previous, target)
+    # hold_thresh 保护：若传入了 --positions 和 --position-date，过滤保护期内的卖出动作。
+    if actual_positions is not None and trading_calendar:
+        raw_position_date = cfg.get("position_date")
+        if raw_position_date:
+            position_date_ts = pd.Timestamp(raw_position_date).normalize()
+        else:
+            # 默认：--positions 是在 trade_date 的前一个交易日建立的
+            prev_str, _ = _previous_trading_day(pd.Timestamp(trade_date), trading_calendar)
+            position_date_ts = pd.Timestamp(prev_str).normalize()
+        actions, target = _apply_hold_protection(
+            actions=actions,
+            target=target,
+            actual_positions=actual_positions,
+            position_date=position_date_ts,
+            trade_date=pd.Timestamp(trade_date).normalize(),
+            hold_thresh=int(cfg.get("hold_thresh", 5)),
+            trading_calendar=trading_calendar,
+            topk=int(cfg.get("topk", 5)),
+        )
+    # 过滤噪音小额调仓（如价格微变导致手数 ±100 股）。
+    min_val = float(cfg.get("min_action_value", 0))
+    if min_val > 0:
+        filtered = [a for a in actions if a.value >= min_val]
+        ignored = [a for a in actions if a.value < min_val]
+        if ignored:
+            logger.info(
+                "已过滤 %d 笔小额调仓（< %.0f元）: %s",
+                len(ignored),
+                min_val,
+                ", ".join(f"{a.instrument} {a.shares:.0f}股 {a.value:.0f}元" for a in ignored),
+            )
+        actions = filtered
     metrics = _last_metrics(report)
     name_map = _load_stock_names()
     sector_map = _load_sector_map(config)
@@ -931,7 +1076,13 @@ def main() -> None:
         return
 
     if not args.skip_update:
-        _run_update(args.config, create_tarball=cfg["create_update_tarball"])
+        # 若 trade_date 已在 qlib 实际数据日历中，无需重新拉取。
+        _pre_actual, _ = _trading_calendar(config)
+        _latest_pre = max(_pre_actual) if _pre_actual else None
+        if _latest_pre is not None and _latest_pre >= trade_date:
+            logger.info("qlib 数据已包含 %s，跳过数据更新。", trade_date_str)
+        else:
+            _run_update(args.config, create_tarball=cfg["create_update_tarball"])
 
     actual_calendar, trading_calendar = _trading_calendar(config)
     if trade_date not in trading_calendar and not args.force:
@@ -944,16 +1095,24 @@ def main() -> None:
     latest_actual = max(actual_calendar) if actual_calendar else None
     if latest_actual is None:
         raise RuntimeError("无法读取 qlib 实际交易日历 calendars/day.txt。")
-    if latest_actual < trade_date and not args.force:
+    # 信号生成基于前一交易日收盘数据，因此只需 qlib 数据涵盖前一交易日即可。
+    prev_trade_date_str, _ = _previous_trading_day(trade_date, list(trading_calendar))
+    prev_trade_date = pd.Timestamp(prev_trade_date_str)
+    if latest_actual < prev_trade_date and not args.force:
         raise RuntimeError(
-            f"qlib 数据尚未更新到 {trade_date_str}，当前最新数据日为 {latest_actual:%Y-%m-%d}。"
+            f"qlib 数据尚未更新到前一交易日 {prev_trade_date_str}，当前最新数据日为 {latest_actual:%Y-%m-%d}。"
         )
 
     next_trade_date, exact_next = _next_trading_day(trade_date, trading_calendar)
     if not exact_next:
         logger.warning("未在交易日历中找到下一交易日，暂按下一个工作日推断: %s", next_trade_date)
 
-    report = _run_real_rebalance(config, cfg, trade_date_str, next_trade_date)
+    actual_positions: Optional[Dict[str, Dict[str, float]]] = None
+    if args.positions:
+        actual_positions = _parse_positions_arg(args.positions, trade_date_str)
+        logger.info("已解析 --positions 实际持仓: %s", list(actual_positions.keys()))
+
+    report = _run_real_rebalance(config, cfg, trade_date_str, next_trade_date, actual_positions, list(trading_calendar))
     _save_signal_cache(cfg, trade_date_str, next_trade_date, report, mock=False)
     _send_report(config, report, trade_date_str, args.dry_run, cfg["notify_channel"])
 
