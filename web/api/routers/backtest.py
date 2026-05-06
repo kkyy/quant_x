@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from web.api.deps import get_config, BACKTEST_RESULTS_DIR
 from web.api.services.task_manager import get_task_manager
+from web.api.services.chart_service import parse_equity_curve, parse_metrics, parse_drawdown, compare_runs
 from web.api.routers.system import stream_task
 
 router = APIRouter()
@@ -150,3 +151,27 @@ async def start_wfv(req: WFVRequest):
 
     task_id = await tm.start_sync_task("wfv", _wfv)
     return {"task_id": task_id}
+
+
+@router.get("/results/{filename}/equity-curve")
+async def get_equity_curve(filename: str):
+    return parse_equity_curve(filename)
+
+
+@router.get("/results/{filename}/metrics")
+async def get_metrics(filename: str):
+    return parse_metrics(filename)
+
+
+@router.get("/results/{filename}/drawdown")
+async def get_drawdown(filename: str):
+    return parse_drawdown(filename)
+
+
+class CompareRequest(BaseModel):
+    filenames: list[str]
+
+
+@router.post("/compare")
+async def compare_backtest_runs(req: CompareRequest):
+    return compare_runs(req.filenames)
