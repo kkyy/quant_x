@@ -372,52 +372,72 @@ def _compute_portfolio_pnl(
     trade_date: str,
     trading_calendar: List[pd.Timestamp],
 ) -> Dict[str, Any]:
-    """Compute daily P&L for actual positions using real price changes.
+    """Compute cumulative & daily P&L for actual positions.
 
-    Returns dict with: total_value, prev_total_value, daily_pnl, daily_return,
-    and per_stock list with instrument/shares/entry_date/prev_price/cur_price/pnl/return/days_held.
+    When entry_date is provided, cumulative P&L is calculated from the
+    entry_date closing price. Otherwise falls back to previous-day price.
+
+    Returns dict with: total_value, cum_pnl, cum_return, daily_pnl, daily_return,
+    and per_stock list with instrument/shares/entry_date/cost_price/prev_price/cur_price/
+    cum_pnl/cum_return/daily_pnl/daily_return/days_held.
     """
     per_stock: List[Dict[str, Any]] = []
     total_value = 0.0
-    prev_total_value = 0.0
+    total_cost_value = 0.0
+    total_prev_value = 0.0
     for inst, info in positions.items():
         shares = float(info.get("shares", 0))
         if shares <= 0:
             continue
         cur_price = float(info.get("price", 0))
-        prev_price = _load_prev_close(inst, trade_date, trading_calendar)
         if cur_price <= 0:
             continue
+        prev_price = _load_prev_close(inst, trade_date, trading_calendar)
         if prev_price is None or prev_price <= 0:
             prev_price = cur_price
-        cur_value = shares * cur_price
-        prev_value = shares * prev_price
-        total_value += cur_value
-        prev_total_value += prev_value
-        pnl = cur_value - prev_value
-        ret = pnl / prev_value if prev_value > 0 else 0.0
-        # Compute holding days from entry_date
+        # Determine cost basis: entry_date close if available, else prev close
         entry_str = info.get("entry_date")
+        cost_price = prev_price
         days_held = None
         if entry_str:
             entry_ts = pd.Timestamp(entry_str).normalize()
             trade_ts = pd.Timestamp(trade_date).normalize()
             days_held = sum(1 for d in trading_calendar if entry_ts <= d < trade_ts)
+            entry_price = _load_actual_close(inst, entry_str)
+            if entry_price is not None and entry_price > 0:
+                cost_price = entry_price
+
+        cur_value = shares * cur_price
+        cost_value = shares * cost_price
+        prev_value = shares * prev_price
+        total_value += cur_value
+        total_cost_value += cost_value
+        total_prev_value += prev_value
+        cum_pnl = cur_value - cost_value
+        cum_ret = cum_pnl / cost_value if cost_value > 0 else 0.0
+        daily_pnl = cur_value - prev_value
+        daily_ret = daily_pnl / prev_value if prev_value > 0 else 0.0
         per_stock.append({
             "instrument": inst,
             "shares": shares,
             "entry_date": entry_str,
+            "cost_price": cost_price,
             "prev_price": prev_price,
             "cur_price": cur_price,
-            "pnl": pnl,
-            "return": ret,
+            "cum_pnl": cum_pnl,
+            "cum_return": cum_ret,
+            "daily_pnl": daily_pnl,
+            "daily_return": daily_ret,
             "days_held": days_held,
         })
-    daily_pnl = total_value - prev_total_value
-    daily_return = daily_pnl / prev_total_value if prev_total_value > 0 else 0.0
+    cum_pnl = total_value - total_cost_value
+    cum_return = cum_pnl / total_cost_value if total_cost_value > 0 else 0.0
+    daily_pnl = total_value - total_prev_value
+    daily_return = daily_pnl / total_prev_value if total_prev_value > 0 else 0.0
     return {
         "total_value": total_value,
-        "prev_total_value": prev_total_value,
+        "cum_pnl": cum_pnl,
+        "cum_return": cum_return,
         "daily_pnl": daily_pnl,
         "daily_return": daily_return,
         "per_stock": per_stock,
@@ -1065,10 +1085,17 @@ def _format_report(
     ]
     # Show real portfolio P&L when available (from --positions), otherwise fall back to backtest metrics
     if portfolio_pnl is not None:
-        pnl = portfolio_pnl["daily_pnl"]
-        ret = portfolio_pnl["daily_return"]
-        sign = "+" if pnl >= 0 else ""
-        lines.append(f"持仓收益 {sign}{pnl:,.0f}元 ({sign}{ret:.2%})  总市值 {portfolio_pnl['total_value']:,.0f}元")
+        cum_pnl = portfolio_pnl["cum_pnl"]
+        cum_ret = portfolio_pnl["cum_return"]
+        daily_pnl = portfolio_pnl["daily_pnl"]
+        daily_ret = portfolio_pnl["daily_return"]
+        sign_cum = "+" if cum_pnl >= 0 else ""
+        sign_day = "+" if daily_pnl >= 0 else ""
+        lines.append(
+            f"累计收益 {sign_cum}{cum_pnl:,.0f}元 ({sign_cum}{cum_ret:.2%})  "
+            f"当日 {sign_day}{daily_pnl:,.0f}元 ({sign_day}{daily_ret:.2%})  "
+            f"总市值 {portfolio_pnl['total_value']:,.0f}元"
+        )
     elif metrics:
         daily_ret = metrics.get("return")
         cost = metrics.get("cost")
@@ -1117,8 +1144,8 @@ def _format_report(
             # Append per-stock P&L and holding days when available
             sp = stock_pnl_map.get(inst)
             if sp:
-                pnl_sign = "+" if sp["pnl"] >= 0 else ""
-                pnl_str = f" | 收益{pnl_sign}{sp['pnl']:,.0f}元({pnl_sign}{sp['return']:.2%})"
+                cum_sign = "+" if sp["cum_pnl"] >= 0 else ""
+                pnl_str = f" | 累计{cum_sign}{sp['cum_pnl']:,.0f}元({cum_sign}{sp['cum_return']:.2%})"
                 hold_str = f" 持{sp['days_held']}日" if sp["days_held"] is not None else ""
                 parts += f"{pnl_str}{hold_str}"
             lines.append(parts)
