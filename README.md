@@ -602,8 +602,14 @@ quant_ex/
 │   │   ├── pledge_fetcher.py      #     股权质押，TTL=1d
 │   │   ├── insider_fetcher.py     #     高管增减持，TTL=1d
 │   │   ├── valuation_fetcher.py   #     估值PE/PB/市值，TTL=1d
-│   │   └── ...                    #     其余8个：balance_sheet/dividend/earnings_guidance/
-│   │                              #     institutional/repurchase/shareholder/visit/sw1_industry
+│   │   ├── balance_sheet_fetcher.py  #  资产负债表比率，TTL=30d
+│   │   ├── dividend_fetcher.py    #     分红历史/股息率，TTL=30d
+│   │   ├── earnings_guidance_fetcher.py  # 业绩预告/惊喜度，TTL=30d
+│   │   ├── institutional_fetcher.py  #   机构持仓（基金/QFII/社保），TTL=30d
+│   │   ├── repurchase_fetcher.py  #     回购计划与进度，TTL=1d
+│   │   ├── shareholder_fetcher.py #     股东户数变化，TTL=30d
+│   │   ├── visit_fetcher.py       #     机构调研统计，TTL=7d
+│   │   └── sw1_industry_fetcher.py  #   申万一级行业成分，TTL=7d
 │   ├── qlib_update/               #   Dolt → SQL → CSV → normalize → dump_bin 数据管道
 │   │   └── normalize.py           #     NoopNormalize 修复 tradedate/date 列名错位
 │   └── sources/                   #   GapFiller（akshare/eastmoney 补缺交易日）
