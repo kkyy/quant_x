@@ -89,7 +89,7 @@ def _parse_args() -> argparse.Namespace:
         "--positions",
         type=str,
         default=None,
-        help="实际持仓覆盖，格式: SH600489:900,SH600900:900。用于从真实持仓计算调仓差分，避免回测模拟持仓与实际不符。",
+        help="实际持仓覆盖，格式: SH600489:900 或 SH600489:900:2026-04-29（含建仓日期）。用于从真实持仓计算调仓差分和收益。",
     )
     parser.add_argument(
         "--position-date",
@@ -353,6 +353,77 @@ def _load_actual_close(instrument: str, trade_date: str) -> Optional[float]:
     return value if value > 0 else None
 
 
+def _load_prev_close(instrument: str, trade_date: str, trading_calendar: List[pd.Timestamp]) -> Optional[float]:
+    """Load the closing price on the trading day before *trade_date*."""
+    ts = pd.Timestamp(trade_date).normalize()
+    prev_day = None
+    for d in trading_calendar:
+        if d < ts:
+            prev_day = d
+        else:
+            break
+    if prev_day is None:
+        return None
+    return _load_actual_close(instrument, prev_day.strftime("%Y-%m-%d"))
+
+
+def _compute_portfolio_pnl(
+    positions: Dict[str, Dict[str, Any]],
+    trade_date: str,
+    trading_calendar: List[pd.Timestamp],
+) -> Dict[str, Any]:
+    """Compute daily P&L for actual positions using real price changes.
+
+    Returns dict with: total_value, prev_total_value, daily_pnl, daily_return,
+    and per_stock list with instrument/shares/entry_date/prev_price/cur_price/pnl/return/days_held.
+    """
+    per_stock: List[Dict[str, Any]] = []
+    total_value = 0.0
+    prev_total_value = 0.0
+    for inst, info in positions.items():
+        shares = float(info.get("shares", 0))
+        if shares <= 0:
+            continue
+        cur_price = float(info.get("price", 0))
+        prev_price = _load_prev_close(inst, trade_date, trading_calendar)
+        if cur_price <= 0:
+            continue
+        if prev_price is None or prev_price <= 0:
+            prev_price = cur_price
+        cur_value = shares * cur_price
+        prev_value = shares * prev_price
+        total_value += cur_value
+        prev_total_value += prev_value
+        pnl = cur_value - prev_value
+        ret = pnl / prev_value if prev_value > 0 else 0.0
+        # Compute holding days from entry_date
+        entry_str = info.get("entry_date")
+        days_held = None
+        if entry_str:
+            entry_ts = pd.Timestamp(entry_str).normalize()
+            trade_ts = pd.Timestamp(trade_date).normalize()
+            days_held = sum(1 for d in trading_calendar if entry_ts <= d < trade_ts)
+        per_stock.append({
+            "instrument": inst,
+            "shares": shares,
+            "entry_date": entry_str,
+            "prev_price": prev_price,
+            "cur_price": cur_price,
+            "pnl": pnl,
+            "return": ret,
+            "days_held": days_held,
+        })
+    daily_pnl = total_value - prev_total_value
+    daily_return = daily_pnl / prev_total_value if prev_total_value > 0 else 0.0
+    return {
+        "total_value": total_value,
+        "prev_total_value": prev_total_value,
+        "daily_pnl": daily_pnl,
+        "daily_return": daily_return,
+        "per_stock": per_stock,
+    }
+
+
 def _convert_snapshot_to_actual_prices(
     snapshot: Dict[str, Dict[str, float]],
     trade_date: str,
@@ -408,23 +479,30 @@ def _convert_snapshot_to_actual_prices(
     return converted
 
 
-def _parse_positions_arg(positions_str: str, trade_date: str) -> Dict[str, Dict[str, float]]:
-    """Parse --positions 'SH600489:900,SH600900:900' into a snapshot dict with actual prices."""
-    result: Dict[str, Dict[str, float]] = {}
+def _parse_positions_arg(positions_str: str, trade_date: str) -> Dict[str, Dict[str, Any]]:
+    """Parse --positions 'SH600489:900,SH600489:900:2026-04-29' into a snapshot dict.
+
+    Format: INSTRUMENT:SHARES or INSTRUMENT:SHARES:ENTRY_DATE
+    Entry date is used for per-stock holding day tracking and hold protection.
+    """
+    result: Dict[str, Dict[str, Any]] = {}
     for item in positions_str.split(","):
         item = item.strip()
         if not item:
             continue
         parts = item.split(":")
-        if len(parts) != 2:
-            raise ValueError(f"--positions 格式错误: {item!r}，期望 INSTRUMENT:SHARES")
+        if len(parts) < 2 or len(parts) > 3:
+            raise ValueError(f"--positions 格式错误: {item!r}，期望 INSTRUMENT:SHARES 或 INSTRUMENT:SHARES:ENTRY_DATE")
         inst = parts[0].strip().upper()
         try:
             shares = float(parts[1].strip())
         except ValueError:
             raise ValueError(f"--positions 股数解析失败: {item!r}")
+        entry_date = parts[2].strip() if len(parts) == 3 else None
         price = _load_actual_close(inst, trade_date) or 0.0
         result[inst] = {"shares": shares, "price": price, "value": shares * price}
+        if entry_date:
+            result[inst]["entry_date"] = entry_date
     return result
 
 
@@ -472,7 +550,7 @@ def _count_trading_days_held(
 def _apply_hold_protection(
     actions: List[RebalanceAction],
     target: Dict[str, Dict[str, float]],
-    actual_positions: Dict[str, Dict[str, float]],
+    actual_positions: Dict[str, Dict[str, Any]],
     position_date: pd.Timestamp,
     trade_date: pd.Timestamp,
     hold_thresh: int,
@@ -481,19 +559,37 @@ def _apply_hold_protection(
 ) -> Tuple[List[RebalanceAction], Dict[str, Dict[str, float]]]:
     """过滤掉还在 hold_thresh 保护期内的卖出/减仓动作，并重建 target。
 
+    当 actual_positions 包含 per-stock entry_date 时，逐股判断保护期：
+    每只股票根据各自的 entry_date 独立计算持有天数，仅保护未过保护期的个股。
+    否则使用全局 position_date 统一判断。
+
     受保护的持仓占用 topk 名额；剩余名额才允许买入新标的，
     避免总仓位超过 topk 上限。
     """
-    days_held = _count_trading_days_held(position_date, trade_date, trading_calendar)
-    if days_held >= hold_thresh:
-        return actions, target  # 保护期已过，不做任何干预
+    trade_ts = pd.Timestamp(trade_date).normalize()
 
-    protected = set(actual_positions.keys())
+    # Determine per-stock protection: use entry_date if available, else global position_date
+    protected: set = set()
+    per_stock_days: Dict[str, int] = {}
+    for inst, info in actual_positions.items():
+        entry_str = info.get("entry_date")
+        if entry_str:
+            entry_ts = pd.Timestamp(entry_str).normalize()
+            days = _count_trading_days_held(entry_ts, trade_ts, trading_calendar)
+        else:
+            days = _count_trading_days_held(position_date, trade_ts, trading_calendar)
+        per_stock_days[inst] = days
+        if days < hold_thresh:
+            protected.add(inst)
+
+    if not protected:
+        return actions, target  # 所有持仓已过保护期
+
     remaining_slots = max(0, topk - len(protected))
 
     # 新 target：先放所有受保护的持仓（保留实际手数）
     new_target: Dict[str, Dict[str, float]] = {}
-    for inst in protected:
+    for inst in sorted(protected):
         new_target[inst] = dict(actual_positions[inst])
 
     # 再从策略选出的 target 里补充空余名额（按原 target 顺序）
@@ -509,10 +605,10 @@ def _apply_hold_protection(
     new_actions = _diff_positions(actual_positions, new_target)
 
     if protected:
+        details = ", ".join(f"{inst}({per_stock_days[inst]}日)" for inst in sorted(protected))
         logger.info(
-            "hold 保护: %s 已持有 %d 个交易日 (< hold_thresh=%d)，"
-            "保留全部原始持仓，新买入名额=%d。",
-            sorted(protected), days_held, hold_thresh, max(0, topk - len(protected)),
+            "hold 保护: %s (< hold_thresh=%d)，保留受保护持仓，新买入名额=%d。",
+            details, hold_thresh, max(0, topk - len(protected)),
         )
     return new_actions, new_target
 
@@ -607,6 +703,10 @@ def _run_real_rebalance(
     metrics = _last_metrics(report)
     name_map = _load_stock_names()
     sector_map = _load_sector_map(config)
+    # Compute real portfolio P&L from actual positions when available
+    portfolio_pnl = None
+    if actual_positions is not None and trading_calendar:
+        portfolio_pnl = _compute_portfolio_pnl(actual_positions, trade_date, trading_calendar)
     base_report = _format_report(
         trade_date=trade_date,
         next_trade_date=next_trade_date,
@@ -618,6 +718,7 @@ def _run_real_rebalance(
         mock=False,
         name_map=name_map,
         sector_map=sector_map,
+        portfolio_pnl=portfolio_pnl,
     )
     # Overlay drawdown monitoring
     drawdown = _compute_cumulative_drawdown(report)
@@ -950,6 +1051,7 @@ def _format_report(
     mock: bool,
     name_map: Optional[Dict[str, str]] = None,
     sector_map: Optional[Dict[str, str]] = None,
+    portfolio_pnl: Optional[Dict[str, Any]] = None,
 ) -> str:
     title = "量化调仓信号"
     if mock:
@@ -961,7 +1063,13 @@ def _format_report(
         f"固定回测起点: {cfg['start_date']}  position日: {latest_position_date}",
         "价格/股数口径: 未复权收盘价，按目标市值折算为100股整数手",
     ]
-    if metrics:
+    # Show real portfolio P&L when available (from --positions), otherwise fall back to backtest metrics
+    if portfolio_pnl is not None:
+        pnl = portfolio_pnl["daily_pnl"]
+        ret = portfolio_pnl["daily_return"]
+        sign = "+" if pnl >= 0 else ""
+        lines.append(f"持仓收益 {sign}{pnl:,.0f}元 ({sign}{ret:.2%})  总市值 {portfolio_pnl['total_value']:,.0f}元")
+    elif metrics:
         daily_ret = metrics.get("return")
         cost = metrics.get("cost")
         parts = []
@@ -989,6 +1097,12 @@ def _format_report(
                 f"{label[item.action]} {item.instrument}{name_str}: {sign}{item.shares:.0f}股{price}{value}"
             )
 
+    # Build per-stock P&L lookup for display in target positions
+    stock_pnl_map: Dict[str, Dict[str, Any]] = {}
+    if portfolio_pnl is not None:
+        for s in portfolio_pnl.get("per_stock", []):
+            stock_pnl_map[s["instrument"]] = s
+
     lines.append("")
     lines.append("目标持仓摘要:")
     if not target:
@@ -999,9 +1113,15 @@ def _format_report(
             sector = sector_map.get(inst, "") if sector_map else ""
             name_str = f" {name}" if name else ""
             sec_str = f" [{sector}]" if sector else ""
-            lines.append(
-                f"{inst}{name_str}{sec_str}: {info['shares']:.0f}股 约{info['value']:,.0f}元"
-            )
+            parts = f"{inst}{name_str}{sec_str}: {info['shares']:.0f}股 约{info['value']:,.0f}元"
+            # Append per-stock P&L and holding days when available
+            sp = stock_pnl_map.get(inst)
+            if sp:
+                pnl_sign = "+" if sp["pnl"] >= 0 else ""
+                pnl_str = f" | 收益{pnl_sign}{sp['pnl']:,.0f}元({pnl_sign}{sp['return']:.2%})"
+                hold_str = f" 持{sp['days_held']}日" if sp["days_held"] is not None else ""
+                parts += f"{pnl_str}{hold_str}"
+            lines.append(parts)
     return "\n".join(lines)
 
 
