@@ -3,7 +3,7 @@
 # Runs 4 training variants sequentially and logs results
 
 set -e
-PROJ=/Users/weidian/code/algorithms/quant_x/strategy/claude/quant_ex
+PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY=$PROJ/.venv/bin/python
 LOG_DIR=/tmp/ablation_logs
 mkdir -p "$LOG_DIR"

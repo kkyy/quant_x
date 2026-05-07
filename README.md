@@ -333,11 +333,24 @@ optimization_results/walk_forward_<run_id>/
 ### 调仓提醒与计划生成
 
 ```bash
+# 测试格式
 ./.venv/bin/python run_scheduled_rebalance.py --mock --dry-run
-./.venv/bin/python run_scheduled_rebalance.py --dry-run
+
+# 实际运行（传入当前持仓，含建仓日期用于计算持股天数和 hold 保护）
+./.venv/bin/python run_scheduled_rebalance.py \
+  --config config/csi1000_balanced_overlay.yaml \
+  --model-path models/lgbm_sector_csi1000_balanced_20260428_235851.pkl \
+  --positions SH600489:900:2026-04-29,SH600900:900:2026-04-29 \
+  --min-action-value 1000
+
+# 不带建仓日期（兼容旧格式）
+./.venv/bin/python run_scheduled_rebalance.py \
+  --positions SH600489:900,SH600900:900
 ```
 
-该脚本会在收盘后执行：更新数据 → 重放回测 → 生成目标持仓和次交易日调仓动作 → 缓存结果 → 推送通知。
+`--positions` 格式：`INSTRUMENT:SHARES` 或 `INSTRUMENT:SHARES:ENTRY_DATE`。传入建仓日期后，报告中每只股票会显示持股天数和个股收益，hold_thresh 保护也按逐股独立判断。
+
+该脚本在收盘后执行：更新数据 → 重放回测 → 生成目标持仓和次交易日调仓动作 → 缓存结果 → 推送通知。
 
 关键约束：
 
@@ -349,7 +362,7 @@ optimization_results/walk_forward_<run_id>/
 
 ## 定时任务
 
-安装 macOS launchd 任务：
+安装 macOS launchd 任务（自动检测项目路径，无需手动修改）：
 
 ```bash
 scripts/install_daily_rebalance_launchd.sh
@@ -570,60 +583,112 @@ config/base.yaml → config/model.yaml → config/notify.yaml → --config 覆�
 
 ```text
 quant_ex/
-├── config/
-├── data/
-│   ├── loader.py
-│   ├── sector.py
-│   ├── universe.py
-│   ├── fetchers/          # 15 个 akshare 数据 fetcher（financial/northbound/pledge/margin/
-│   │                      #   insider/analyst/shareholder/dividend/valuation/balance_sheet/
-│   │                      #   earnings_guidance/institutional/repurchase/visit/sw1_industry）
-│   ├── qlib_update/
-│   └── sources/
-├── features/
-│   ├── technical_factors.py
-│   ├── sector_factors.py
-│   ├── factor_mining.py
-│   ├── regime_features.py
-│   ├── northbound_factor.py
-│   ├── fundamental_factor.py
-│   ├── pledge_factor.py        # 股权质押
-│   ├── margin_factor.py        # 融资融券
-│   ├── insider_factor.py       # 高管增减持
-│   ├── analyst_factor.py       # 分析师评级/EPS预期
-│   ├── shareholder_factor.py   # 股东户数
-│   ├── dividend_factor.py      # 分红
-│   ├── valuation_factor.py     # 估值（PE/PB/市值）
-│   ├── balance_sheet_factor.py # 资产负债表比率
-│   ├── earnings_guidance_factor.py  # 业绩预告
-│   ├── institutional_factor.py # 机构持仓
-│   ├── repurchase_factor.py    # 回购
-│   ├── visit_factor.py         # 机构调研
-│   ├── csv_factor.py           # CSV 自定义因子
-│   └── library/
-├── models/
-├── backtest/
-├── signals/
-├── strategy/
-│   └── regime_switch.py
-├── notify/
-├── crawler/
-│   └── eastmoney/
-├── web/
-│   ├── api/                    # FastAPI 后端
-│   │   ├── app.py              # 应用工厂 + CORS + 静态文件挂载
-│   │   ├── deps.py             # 共享依赖（配置加载、路径常量）
-│   │   ├── routers/            # 7 个 API 路由（system/data/models/backtest/signals/factors/config）
-│   │   └── services/           # TaskManager（后台任务 + SSE）、日志捕获
-│   ├── frontend/               # React 前端（Vite + TypeScript + Tailwind + react-i18next）
-│   │   ├── src/pages/          # 8 个页面组件
-│   │   ├── src/api/client.ts   # API 客户端
-│   │   ├── src/hooks/useSSE.ts # SSE 流 hook
-│   │   ├── src/i18n/           # 国际化翻译文件（en.json / zh.json）
-│   │   └── src/components/     # Sidebar、Layout、LanguageToggle、共享组件
-│   └── run_web.py              # 入口：uvicorn web.api.app:app
-├── agent/
-└── test/
+├── config/                        # 策略与运行配置（base → model → notify → 覆盖文件，逐层合并）
+│   ├── base.yaml                  #   市场、策略(topk/n_drop/hold)、回测、daily_rebalance、信号处理
+│   ├── model.yaml                 #   模型参数、额外因子列表、ensemble、FactorScreener
+│   ├── notify.yaml.example        #   通知渠道模板（Bark/PushPlus/钉钉/Server酱/微信）
+│   └── csi1000_balanced_overlay.yaml  #   SVS overlay 策略配置（独立研究线）
+│
+├── data/                          # 数据层：加载、过滤、更新、外部数据获取
+│   ├── loader.py                  #   DataLoader：qlib D.features 构建 dataset + price_data
+│   ├── utils.py                   #   统一 code_to_qlib_instrument() + cached load_stock_names()
+│   ├── sector.py                  #   SectorDataProvider：并发 akshare 行业/概念数据（7d 缓存）
+│   ├── universe.py                #   UniverseFilter：流动性/ST/KCB/停牌/价格过滤
+│   ├── fetchers/                  #   15 个 akshare 数据 fetcher（BaseDataFetcher 子类）
+│   │   ├── financial_fetcher.py   #     利润表/现金流，TTL=7d
+│   │   ├── northbound_fetcher.py  #     北向资金，TTL=1d
+│   │   ├── analyst_fetcher.py     #     分析师评级/EPS，TTL=3d
+│   │   ├── margin_fetcher.py      #     融资融券，TTL=1d
+│   │   ├── pledge_fetcher.py      #     股权质押，TTL=1d
+│   │   ├── insider_fetcher.py     #     高管增减持，TTL=1d
+│   │   ├── valuation_fetcher.py   #     估值PE/PB/市值，TTL=1d
+│   │   └── ...                    #     其余8个：balance_sheet/dividend/earnings_guidance/
+│   │                              #     institutional/repurchase/shareholder/visit/sw1_industry
+│   ├── qlib_update/               #   Dolt → SQL → CSV → normalize → dump_bin 数据管道
+│   │   └── normalize.py           #     NoopNormalize 修复 tradedate/date 列名错位
+│   └── sources/                   #   GapFiller（akshare/eastmoney 补缺交易日）
+│
+├── features/                      # 因子层：20 个已注册因子，装饰器自动注册
+│   ├── base.py                    #   BaseFactor + FactorPipeline（并行计算）+ FactorScreener
+│   ├── technical_factors.py       #   Alpha158 + 扩展技术因子
+│   ├── sector_factors.py          #   板块动量/相对强弱/反转/波动/概念（向量化 groupby）
+│   ├── regime_features.py         #   市场状态因子：trend/vol/breadth/corr/drawdown/label
+│   ├── fundamental_factor.py      #   财务因子：ROE/ROA/毛利率/营收增速/FCF 等
+│   ├── northbound_factor.py       #   北向资金：持股比例/增减/集中度
+│   ├── csv_factor.py              #   CSV 自定义因子（从文件加载）
+│   ├── factor_mining.py           #   qlib 表达式挖掘 + MinedFactorLoader
+│   ├── *_factor.py                #   其余10个数据驱动因子（pledge/margin/insider/analyst/
+│   │                              #   shareholder/dividend/valuation/balance_sheet/
+│   │                              #   earnings_guidance/institutional/repurchase/visit）
+│   └── library/                   #   FactorMeta + FactorLibrary（目录）+ FactorCleaner
+│
+├── models/                        # 模型层：注册制 + 持久化 + 兼容补丁
+│   ├── base.py                    #   BaseAlphaModel + ModelRegistry + load/save
+│   ├── lgbm_model.py              #   LGBMAlphaModel（bootstrap bagging + ensemble）
+│   ├── trainer.py                 #   ModelTrainer：自动 importlib 注册 + 特征重要性持久化
+│   └── *.pkl                      #   训练产物（+ _meta.json + _feature_importance.json sidecar）
+│
+├── backtest/                      # 回测层：qlib 包装 + 指标 + 归因 + 诊断
+│   ├── engine.py                  #   BacktestEngine → qlib backtest_daily + TopkDropoutStrategy
+│   ├── metrics.py                 #   compute_metrics：绝对/超额/换手率/IR/tracking_error
+│   ├── attribution.py             #   Brinson 板块归因（allocation/selection/interaction）
+│   └── signal_diagnostics.py      #   IC 衰减分析 + 滚动 IC 监控
+│
+├── signals/                       # 信号层：生成 → 后处理 → 持仓 → 差分
+│   ├── generator.py               #   SignalGenerator：预测 → 过滤 → topk → 目标持仓 → 报告
+│   └── postprocess.py             #   rank/zscore + 行业中性化 + 市值中性化 + SVS过滤 + 回撤门控
+│
+├── strategy/                      # 策略层：regime 感知与参数切换
+│   └── regime_switch.py           #   RegimeStrategySwitch：检测 regime → 调整 topk/n_drop/hold
+│
+├── notify/                        # 通知层：5 渠道推送
+│   └── pusher.py                  #   NotificationPusher：Bark/PushPlus/钉钉/Server酱/微信
+│
+├── crawler/                       # 东方财富 SDK（独立于 qlib，直连无代理）
+│   ├── eastmoney/                 #   API 封装
+│   └── data/                      #   sector_codes.json + sector_stocks.json 缓存
+│
+├── web/                           # Web Dashboard：FastAPI + React
+│   ├── api/                       #   后端
+│   │   ├── app.py                 #     应用工厂 + CORS + 静态文件挂载 + sys.path 设置
+│   │   ├── deps.py                #     共享依赖（配置加载、路径常量）
+│   │   ├── routers/               #     7 个 API 路由（system/data/models/backtest/signals/factors/config）
+│   │   └── services/              #     TaskManager（后台任务 + SSE）、日志捕获流
+│   ├── frontend/                  #   前端（Vite + TypeScript + Tailwind + react-i18next）
+│   │   ├── src/pages/             #     8 个页面组件
+│   │   ├── src/api/client.ts      #     Typed API 客户端
+│   │   ├── src/hooks/useSSE.ts    #     SSE 流式推送 hook
+│   │   ├── src/i18n/             #     国际化（en.json / zh.json）
+│   │   └── src/components/        #     Sidebar、Layout、LanguageToggle、共享组件
+│   └── run_web.py                 #   入口：uvicorn + 静态文件服务
+│
+├── agent/                         # AI 辅助
+│   └── auto_optimizer.py          #   Claude API 网格搜索参数优化
+│
+├── scripts/                       # 运维脚本
+│   ├── install_daily_rebalance_launchd.sh  # 安装定时调仓（动态路径）
+│   ├── run_ablation.sh            # 因子消融训练（4 变体）
+│   ├── run_ablation_launcher.py   # Python 版消融启动器
+│   ├── run_ablation_backtest.py   # 消融模型回测对比（自动发现最新模型）
+│   └── run_overlay_csi1000_balanced_signal.sh  # 每日调仓信号（含 --positions）
+│
+├── command/                       # 快捷命令
+│   ├── daily/                     #   日常信号脚本（csi1000_balanced_overlay 等）
+│   ├── backtest/                  #   回测/网格搜索/WFV
+│   ├── data/                      #   数据获取/更新
+│   ├── train/                     #   模型训练
+│   └── util/                      #   工具（测试/注册表/web 启动）
+│
+├── test/                          # pytest 测试套件（331 tests）
+│
+├── run_train.py                   # 模型训练入口
+├── run_backtest.py                # 回测 + 网格搜索 + AI 优化入口
+├── run_walk_forward_validation.py # Walk-forward 时间交叉验证入口
+├── run_daily.py                   # 每日信号生成入口
+├── run_scheduled_rebalance.py     # 收盘后调仓信号入口（P&L + 持股天数 + hold 保护）
+├── run_fetch_data.py              # 外部数据获取入口（15 种类型）
+├── run_update_qlib_data.py        # qlib 数据管道入口
+└── run_factor_mining.py           # 因子挖掘入口
 ```
 
 ---
