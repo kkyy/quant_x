@@ -1,0 +1,31 @@
+# Fundamental postprocess ablation v2:
+# coverage-aware weak risk filter.
+#
+# Difference vs ablation_fundamental_gate.yaml:
+# - keep_top_pct = 0.80, only drops the weakest 20% instead of 30%.
+# - min_metric_count = 4, so dates/stocks with insufficient fundamental
+#   coverage keep the original model score rather than being silently removed.
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    fundamental_filter:
+      enabled: true
+      mode: "hard_filter"
+      keep_top_pct: 0.80
+      min_metric_count: 4
+      missing_rank_policy: "keep"
+      metrics:
+        peg: 1
+        revenue_growth: 1
+        profit_growth: 1
+        pb: -1
+        pcf: -1
+      cache_dirs:
+        valuation: "./cache/valuation"
+        financial: "./cache/financial"
+      source_lags:
+        valuation: 0
+        financial: 45

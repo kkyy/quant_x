@@ -1,0 +1,26 @@
+# Fundamental postprocess ablation v5:
+# growth-only weak risk filter with coverage guard.
+#
+# Compared with growth_gate_top70_cov2:
+# - keep_top_pct = 0.80, only drops the weakest 20% when both growth metrics
+#   are available.
+# - Missing growth coverage keeps the original model score.
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    fundamental_filter:
+      enabled: true
+      mode: "hard_filter"
+      keep_top_pct: 0.80
+      min_metric_count: 2
+      missing_rank_policy: "keep"
+      metrics:
+        revenue_growth: 1
+        profit_growth: 1
+      cache_dirs:
+        financial: "./cache/financial"
+      source_lags:
+        financial: 45

@@ -292,6 +292,38 @@ def test_compute_fundamental_rank_from_cache_with_metric_signs(tmp_path):
     assert rank.loc[("BBB", pd.Timestamp("2024-01-02"))] == 1 / 3
 
 
+def test_compute_fundamental_rank_respects_min_metric_count(tmp_path):
+    instruments = ["AAA", "BBB", "CCC"]
+    dates = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    price_idx = pd.MultiIndex.from_product(
+        [instruments, dates],
+        names=["instrument", "datetime"],
+    )
+    price_data = pd.DataFrame({"real_close": 1.0}, index=price_idx)
+
+    valuation_dir = tmp_path / "valuation"
+    valuation_dir.mkdir()
+    for instrument, pb in [("AAA", 1.0), ("BBB", 3.0), ("CCC", 2.0)]:
+        df = pd.DataFrame(
+            {"pb": [pb]},
+            index=pd.MultiIndex.from_tuples(
+                [(instrument, pd.Timestamp("2024-01-01"))],
+                names=["instrument", "datetime"],
+            ),
+        )
+        df.to_csv(valuation_dir / f"{instrument}.csv")
+
+    rank = compute_fundamental_rank(
+        price_data=price_data,
+        metrics_cfg={"pb": -1, "missing_metric": 1},
+        cache_dirs={"valuation": str(valuation_dir)},
+        source_lags={"valuation": 0},
+        min_metric_count=2,
+    )
+
+    assert rank is None
+
+
 def test_postprocess_signal_fundamental_filter_hard_filter(tmp_path):
     instruments = ["AAA", "BBB", "CCC"]
     dates = pd.to_datetime(["2024-01-01", "2024-01-02"])
@@ -338,6 +370,56 @@ def test_postprocess_signal_fundamental_filter_hard_filter(tmp_path):
     filtered = postprocess_signal(pred, config=config, price_data=price_data)
 
     assert list(filtered.index.get_level_values("instrument")) == ["AAA"]
+
+
+def test_postprocess_signal_fundamental_filter_keeps_low_coverage_rows(tmp_path):
+    instruments = ["AAA", "BBB", "CCC"]
+    dates = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    price_idx = pd.MultiIndex.from_product(
+        [instruments, dates],
+        names=["instrument", "datetime"],
+    )
+    price_data = pd.DataFrame({"real_close": 1.0}, index=price_idx)
+
+    valuation_dir = tmp_path / "valuation"
+    valuation_dir.mkdir()
+    for instrument, peg in [("AAA", 3.0), ("BBB", 1.0), ("CCC", 2.0)]:
+        df = pd.DataFrame(
+            {"peg": [peg]},
+            index=pd.MultiIndex.from_tuples(
+                [(instrument, pd.Timestamp("2024-01-01"))],
+                names=["instrument", "datetime"],
+            ),
+        )
+        df.to_csv(valuation_dir / f"{instrument}.csv")
+
+    pred_idx = pd.MultiIndex.from_product(
+        [instruments, [pd.Timestamp("2024-01-02")]],
+        names=["instrument", "datetime"],
+    )
+    pred = pd.Series([0.1, 0.9, 0.5], index=pred_idx)
+    config = {
+        "signal": {
+            "postprocess": {
+                "enabled": True,
+                "daily_transform": "none",
+                "fundamental_filter": {
+                    "enabled": True,
+                    "mode": "hard_filter",
+                    "keep_top_pct": 1 / 3,
+                    "min_metric_count": 2,
+                    "missing_rank_policy": "keep",
+                    "metrics": {"peg": 1, "missing_metric": 1},
+                    "cache_dirs": {"valuation": str(valuation_dir)},
+                    "source_lags": {"valuation": 0},
+                },
+            }
+        }
+    }
+
+    filtered = postprocess_signal(pred, config=config, price_data=price_data)
+
+    assert set(filtered.index.get_level_values("instrument")) == set(instruments)
 
 
 def test_postprocess_requires_price_data_for_fundamental_filter():

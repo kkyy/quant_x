@@ -226,12 +226,15 @@ def compute_fundamental_rank(
     metrics_cfg,
     cache_dirs: Optional[dict] = None,
     source_lags: Optional[dict] = None,
+    min_metric_count: int = 1,
 ) -> Optional[pd.Series]:
     """Return daily composite rank from cached fundamental metrics.
 
     Metric sign convention: `+1` means higher is better; `-1` means lower is
     better.  Each signed metric is ranked cross-sectionally per day, then the
     available ranks are averaged and ranked again for a stable [0, 1] score.
+    Rows with fewer than ``min_metric_count`` available metrics are left as
+    missing so callers can skip filtering on low-coverage dates.
     """
     if price_data is None or price_data.empty:
         return None
@@ -265,7 +268,12 @@ def compute_fundamental_rank(
     if not rank_parts:
         return None
 
-    composite = pd.concat(rank_parts, axis=1).mean(axis=1, skipna=True)
+    rank_frame = pd.concat(rank_parts, axis=1)
+    min_metric_count = max(1, int(min_metric_count))
+    metric_counts = rank_frame.notna().sum(axis=1)
+    composite = rank_frame.mean(axis=1, skipna=True).where(
+        metric_counts >= min_metric_count
+    )
     composite = composite.dropna().rename("fundamental_composite")
     if composite.empty:
         return None
@@ -288,6 +296,8 @@ def apply_fundamental_filter(
               mode: "hard_filter"      # hard_filter | multiplicative_weight | residual_add
               keep_top_pct: 0.7
               weight_strength: 0.1
+              min_metric_count: 4
+              missing_rank_policy: "keep"  # keep | drop
               metrics:
                 peg: 1
                 revenue_growth: 1
@@ -328,6 +338,7 @@ def apply_fundamental_filter(
         metrics_cfg=cfg.get("metrics", {}),
         cache_dirs=cfg.get("cache_dirs"),
         source_lags=cfg.get("source_lags"),
+        min_metric_count=int(cfg.get("min_metric_count", 1)),
     )
     if factor_rank is None or factor_rank.empty:
         logger.warning("fundamental_filter produced no factor rank; skipped")
@@ -341,6 +352,34 @@ def apply_fundamental_filter(
         factor_rank = factor_rank.reorder_levels(pred.index.names)
 
     weight_strength = float(cfg.get("weight_strength", 0.1))
+    if mode == "hard_filter":
+        threshold = 1.0 - keep_top_pct
+        factor_rank_aligned = factor_rank.reindex(pred.index)
+        eligible = factor_rank_aligned.notna()
+        if not eligible.any():
+            logger.info("fundamental_filter has no eligible rows; returning unfiltered signal")
+            return pred
+        keep = factor_rank_aligned >= threshold
+        missing_rank_policy = cfg.get("missing_rank_policy", "keep")
+        if missing_rank_policy == "keep":
+            keep = keep | ~eligible
+        elif missing_rank_policy != "drop":
+            logger.warning(
+                "fundamental_filter missing_rank_policy=%s is unknown; using keep",
+                missing_rank_policy,
+            )
+            keep = keep | ~eligible
+        result = pred[keep.fillna(False)]
+        logger.info(
+            "fundamental_filter kept %d/%d signal rows (eligible=%d, keep_top_pct=%.2f, min_metric_count=%d)",
+            len(result),
+            len(pred),
+            int(eligible.sum()),
+            keep_top_pct,
+            int(cfg.get("min_metric_count", 1)),
+        )
+        return result if not result.empty else pred
+
     result = _apply_svs_filter_core(
         pred=pred,
         factor_rank=factor_rank,
@@ -348,19 +387,11 @@ def apply_fundamental_filter(
         keep_top_pct=keep_top_pct,
         effective_weight=weight_strength,
     )
-    if mode == "hard_filter":
-        logger.info(
-            "fundamental_filter kept %d/%d signal rows (keep_top_pct=%.2f)",
-            len(result),
-            len(pred),
-            keep_top_pct,
-        )
-    else:
-        logger.info(
-            "fundamental_filter applied %s (weight_strength=%.2f)",
-            mode,
-            weight_strength,
-        )
+    logger.info(
+        "fundamental_filter applied %s (weight_strength=%.2f)",
+        mode,
+        weight_strength,
+    )
     return result
 
 

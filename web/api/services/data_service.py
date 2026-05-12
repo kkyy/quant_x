@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -55,6 +56,38 @@ def _cached(key: str, ttl: float, factory: Callable[[], Any]) -> Any:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _json_safe_value(value: Any) -> Any:
+    """Convert pandas/numpy scalar values to strict JSON-compatible values."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if hasattr(value, "item"):
+        try:
+            item = value.item()
+            if isinstance(item, float) and not math.isfinite(item):
+                return None
+            return item
+        except (TypeError, ValueError):
+            pass
+    return value
+
+
+def _json_safe_quote_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """Build quote records without NaN/inf values leaking into JSON responses."""
+    records = []
+    for dt, row in df.iterrows():
+        dt_str = dt.strftime("%Y-%m-%d") if isinstance(dt, datetime) else str(dt)[:10]
+        values = {key: _json_safe_value(value) for key, value in row.to_dict().items()}
+        records.append({"date": dt_str, **values})
+    return records
+
+
 def get_stock_quotes(
     symbol: str,
     start: str,
@@ -82,7 +115,8 @@ def get_stock_quotes(
     from quant_ex.data.utils import load_stock_names, normalize_qlib_instrument
 
     qlib_sym = normalize_qlib_instrument(symbol)
-    cache_key = f"quotes:{qlib_sym}:{start}:{end}"
+    fields_key = ",".join(fields) if fields else "default"
+    cache_key = f"quotes:{qlib_sym}:{start}:{end}:{fields_key}"
 
     def _load() -> Dict[str, Any]:
         loader = _qlib_loader()
@@ -118,13 +152,7 @@ def get_stock_quotes(
         col_map = {c: c.lstrip("$") for c in df.columns}
         df = df.rename(columns=col_map)
 
-        # Format datetime index
-        records = []
-        for dt, row in df.iterrows():
-            dt_str = dt.strftime("%Y-%m-%d") if isinstance(dt, datetime) else str(dt)[:10]
-            records.append({"date": dt_str, **row.to_dict()})
-
-        return {"symbol": qlib_sym, "name": stock_name, "data": records}
+        return {"symbol": qlib_sym, "name": stock_name, "data": _json_safe_quote_records(df)}
 
     return _cached(cache_key, ttl=86400.0, factory=_load)
 

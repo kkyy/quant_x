@@ -387,3 +387,42 @@ gate badly underperformed in 2020 and 2021, and it is much worse than both
 `adaptive_baseline_wf` and `adaptive_dd20_wf`. Do not promote this top70
 fundamental gate. If fundamentals are revisited, start with a much weaker
 drop-bottom filter or a longer point-in-time audit before any WFV.
+
+## V2/V3/V4 Results - Coverage And Growth Gates
+
+After the broad top70 gate failed, tested progressively safer variants:
+
+1. `config/ablation_fundamental_gate_drop20_cov4.yaml`
+   - Same-model result identical to same-day control.
+   - Interpretation: `min_metric_count=4` is too strict for current caches and
+     makes the filter effectively inactive.
+
+2. `config/ablation_fundamental_gate_drop20_cov3.yaml`
+   - Same-model result also identical to control.
+   - Interpretation: broad composite bottom-20 filtering does not affect the
+     `topk=15` portfolio enough to matter.
+
+3. `config/ablation_fundamental_growth_gate_top70_cov2.yaml`
+   - WFV source:
+     `optimization_results/walk_forward_fundamental_growth_gate_top70_cov2_wf/walk_forward_summary.csv`
+   - Mean Sharpe `0.760`, min Sharpe `-0.445`, worst MaxDD `-30.55%`,
+     positive folds `6/7`, p-value `0.045`.
+   - Interpretation: growth-only plus coverage guard fixes much of the broad
+     gate failure, but still trails baseline and dd20.
+
+4. `config/ablation_fundamental_growth_gate_drop20_cov2.yaml`
+   - Same-model source:
+     `backtest_results/ablation/fundamental_growth_gate_drop20_cov2_20260512.csv`
+   - Same-model 2024-2026 Sharpe `2.177`, IR `1.818`.
+   - WFV source:
+     `optimization_results/walk_forward_fundamental_growth_gate_drop20_cov2_wf/walk_forward_summary.csv`
+   - WFV mean Sharpe `0.872`, min Sharpe `-0.529`, worst MaxDD `-29.57%`,
+     positive folds `5/7`, p-value `0.068`.
+   - Interpretation: best fundamental-only postprocess branch so far, but
+     still not good enough versus `adaptive_baseline_wf` (mean Sharpe `1.218`)
+     or `adaptive_dd20_wf` (mean Sharpe `0.984`, all folds positive).
+
+Current decision: do not promote any fundamental gate. The most informative
+next experiment, if continuing this branch, is a drawdown/regime-gated growth
+filter that disables the growth filter in weak markets, because the drop20
+version is strong in 2024-2026 but still loses in 2022/2023.

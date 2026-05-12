@@ -1,0 +1,26 @@
+# Fundamental postprocess ablation v4:
+# growth-only gate with coverage guard.
+#
+# Hypothesis: the broad PEG/value/growth composite failed WFV because early
+# years were effectively valuation-only. This arm applies a gate only when both
+# revenue_growth and profit_growth are available; otherwise the original model
+# score is kept.
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    fundamental_filter:
+      enabled: true
+      mode: "hard_filter"
+      keep_top_pct: 0.70
+      min_metric_count: 2
+      missing_rank_policy: "keep"
+      metrics:
+        revenue_growth: 1
+        profit_growth: 1
+      cache_dirs:
+        financial: "./cache/financial"
+      source_lags:
+        financial: 45

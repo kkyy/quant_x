@@ -1,3 +1,6 @@
+import json
+
+import pandas as pd
 from fastapi.testclient import TestClient
 
 from web.api.app import create_app
@@ -5,6 +8,7 @@ from web.api.routers import backtest as backtest_router
 from web.api.routers import data as data_router
 from web.api.routers import signals as signals_router
 from web.api.services import chart_service
+from web.api.services.data_service import _json_safe_quote_records
 
 
 def test_spa_deep_link_falls_back_to_index():
@@ -43,6 +47,25 @@ def test_sector_list_uses_sector_map_cache(monkeypatch, tmp_path):
         {"sector_id": "Banks", "sector_name": "Banks", "stock_count": 2},
         {"sector_id": "Liquor", "sector_name": "Liquor", "stock_count": 1},
     ]
+
+
+def test_stock_quote_records_are_strict_json_safe():
+    df = pd.DataFrame(
+        {
+            "open": [1.0, float("nan")],
+            "close": [float("inf"), float("-inf")],
+            "volume": [100, pd.NA],
+        },
+        index=pd.to_datetime(["2026-05-11", "2026-05-12"]),
+    )
+
+    records = _json_safe_quote_records(df)
+
+    assert records == [
+        {"date": "2026-05-11", "open": 1.0, "close": None, "volume": 100},
+        {"date": "2026-05-12", "open": None, "close": None, "volume": None},
+    ]
+    json.dumps(records, allow_nan=False)
 
 
 def test_equity_curve_accepts_qlib_bench_column(monkeypatch, tmp_path):

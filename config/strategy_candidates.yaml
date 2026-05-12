@@ -33,6 +33,12 @@ research:
       result_source: "optimization_results/walk_forward_fundamental_gate_top70_wf/walk_forward_summary.csv"
       reason: "Same-model 2024-2026 uplift failed WFV: mean Sharpe 0.30, min Sharpe -1.20, worst MaxDD -45.5%, only 4/7 positive folds, p=0.515."
       revisit_only_if: "Use a much weaker drop-bottom gate or redo after a longer point-in-time fundamental audit; do not promote top70 gate."
+    fundamental_growth_gate_drop20_cov2:
+      date: "2026-05-12"
+      config: "config/ablation_fundamental_growth_gate_drop20_cov2.yaml"
+      result_source: "optimization_results/walk_forward_fundamental_growth_gate_drop20_cov2_wf/walk_forward_summary.csv"
+      reason: "Improved the fundamental branch to mean Sharpe 0.87 and 5/7 positive folds, but still trails adaptive_baseline_wf (1.22) and adaptive_dd20_wf (0.98, 7/7 positive); 2022/2023 remain negative."
+      revisit_only_if: "Only revisit with drawdown/regime gating that disables the growth filter in weak markets."
 
 selected:
   # Highest robust_score in the completed walk-forward grid. Strong return,

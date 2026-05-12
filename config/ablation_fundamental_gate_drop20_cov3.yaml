@@ -1,0 +1,31 @@
+# Fundamental postprocess ablation v3:
+# weak risk filter with a lighter coverage requirement.
+#
+# Compared with top70 gate:
+# - keep_top_pct = 0.80, only drops the weakest 20%.
+# - min_metric_count = 3, allowing valuation-only periods to participate
+#   while avoiding one-metric accidental filters.
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    fundamental_filter:
+      enabled: true
+      mode: "hard_filter"
+      keep_top_pct: 0.80
+      min_metric_count: 3
+      missing_rank_policy: "keep"
+      metrics:
+        peg: 1
+        revenue_growth: 1
+        profit_growth: 1
+        pb: -1
+        pcf: -1
+      cache_dirs:
+        valuation: "./cache/valuation"
+        financial: "./cache/financial"
+      source_lags:
+        valuation: 0
+        financial: 45

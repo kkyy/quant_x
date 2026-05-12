@@ -657,12 +657,20 @@ def _run_real_rebalance(
         end=trade_date,
     )
     engine = BacktestEngine(config)
+    # When real holdings are provided, qlib's internal hold_thresh is based on
+    # the replayed paper portfolio rather than the user's actual entry dates.
+    # Disable it here and apply real-position hold protection below.
+    replay_hold_thresh = 0 if actual_positions is not None else cfg["hold_thresh"]
+    if actual_positions is not None and int(cfg.get("hold_thresh", 0)) > 0:
+        logger.info(
+            "检测到 --positions，回放阶段禁用 qlib 内部 hold_thresh，改用真实持仓建仓日做保护。"
+        )
     report, positions = engine.run(
         pred=pred,
         strategy_params={
             "topk": cfg["topk"],
             "n_drop": cfg["n_drop"],
-            "hold_thresh": cfg["hold_thresh"],
+            "hold_thresh": replay_hold_thresh,
         },
         start_time=cfg["start_date"],
         end_time=trade_date,
