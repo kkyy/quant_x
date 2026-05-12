@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
@@ -60,6 +61,11 @@ def postprocess_signal(
         sector_map=sector_map,
         price_data=price_data,
     )
+    signal = apply_fundamental_filter(
+        signal,
+        config=config,
+        price_data=price_data,
+    )
 
     return signal.sort_index(kind="mergesort")
 
@@ -71,6 +77,7 @@ def postprocess_requires_price_data(config: dict) -> bool:
         return False
     return bool(
         cfg.get("stock_vs_sector_filter", {}).get("enabled", False)
+        or cfg.get("fundamental_filter", {}).get("enabled", False)
     )
 
 
@@ -140,6 +147,221 @@ def _apply_svs_filter_core(
     keep = factor_rank.reindex(pred.index) >= threshold
     filtered = pred[keep.fillna(False)]
     return filtered if not filtered.empty else pred
+
+
+def _load_cached_fundamental_sources(
+    cache_dirs: dict,
+    source_lags: dict,
+) -> pd.DataFrame:
+    """Load per-stock cached fundamental CSVs without refreshing external data."""
+    parts = []
+    seen: set[str] = set()
+    for source, raw_dir in cache_dirs.items():
+        cache_dir = Path(raw_dir)
+        if not cache_dir.exists():
+            logger.warning("fundamental_filter cache dir missing: %s=%s", source, cache_dir)
+            continue
+        frames = []
+        lag_days = int(source_lags.get(source, 0))
+        for path in sorted(cache_dir.glob("*.csv")):
+            try:
+                df = pd.read_csv(path, index_col=[0, 1], parse_dates=[1])
+                if df.empty:
+                    continue
+                df.index.names = ["instrument", "datetime"]
+                if lag_days:
+                    idx = df.index
+                    shifted_dates = idx.get_level_values("datetime") + pd.Timedelta(days=lag_days)
+                    df.index = pd.MultiIndex.from_arrays(
+                        [idx.get_level_values("instrument"), shifted_dates],
+                        names=["instrument", "datetime"],
+                    )
+                frames.append(df.apply(pd.to_numeric, errors="coerce"))
+            except Exception as exc:
+                logger.debug("fundamental_filter failed to read %s: %s", path, exc)
+        if not frames:
+            continue
+        data = pd.concat(frames).sort_index()
+        rename = {}
+        for col in data.columns:
+            final = col if col not in seen else f"{source}_{col}"
+            rename[col] = final
+            seen.add(final)
+        parts.append(data.rename(columns=rename))
+    return pd.concat(parts, axis=1).sort_index() if parts else pd.DataFrame()
+
+
+def _align_fundamental_to_price(
+    factors: pd.DataFrame,
+    price_index: pd.MultiIndex,
+) -> pd.DataFrame:
+    instruments = price_index.get_level_values("instrument").unique()
+    price_dates = price_index.get_level_values("datetime").unique()
+    factor_dates = factors.index.get_level_values("datetime").unique()
+    all_dates = price_dates.union(factor_dates).sort_values()
+    target = pd.MultiIndex.from_product(
+        [instruments, all_dates], names=["instrument", "datetime"]
+    )
+    aligned = factors.reindex(target)
+    aligned = aligned.groupby(level="instrument", group_keys=False).ffill()
+    return aligned.reindex(price_index)
+
+
+def _fundamental_metric_signs(metrics_cfg) -> dict[str, float]:
+    if isinstance(metrics_cfg, dict):
+        return {str(k): float(v) for k, v in metrics_cfg.items()}
+    if isinstance(metrics_cfg, list):
+        signs = {}
+        for item in metrics_cfg:
+            if isinstance(item, dict):
+                signs[str(item["name"])] = float(item.get("sign", 1.0))
+            else:
+                signs[str(item)] = 1.0
+        return signs
+    return {}
+
+
+def compute_fundamental_rank(
+    price_data: pd.DataFrame,
+    metrics_cfg,
+    cache_dirs: Optional[dict] = None,
+    source_lags: Optional[dict] = None,
+) -> Optional[pd.Series]:
+    """Return daily composite rank from cached fundamental metrics.
+
+    Metric sign convention: `+1` means higher is better; `-1` means lower is
+    better.  Each signed metric is ranked cross-sectionally per day, then the
+    available ranks are averaged and ranked again for a stable [0, 1] score.
+    """
+    if price_data is None or price_data.empty:
+        return None
+    metric_signs = _fundamental_metric_signs(metrics_cfg)
+    if not metric_signs:
+        return None
+    cache_dirs = cache_dirs or {
+        "valuation": "./cache/valuation",
+        "financial": "./cache/financial",
+    }
+    source_lags = source_lags or {
+        "valuation": 0,
+        "financial": 45,
+    }
+
+    raw = _load_cached_fundamental_sources(cache_dirs, source_lags)
+    if raw.empty:
+        return None
+    aligned = _align_fundamental_to_price(raw, price_data.index)
+
+    rank_parts = []
+    missing = []
+    for metric, sign in metric_signs.items():
+        if metric not in aligned.columns:
+            missing.append(metric)
+            continue
+        signed = aligned[metric] * sign
+        rank_parts.append(daily_rank(signed, pct=True).rename(metric))
+    if missing:
+        logger.warning("fundamental_filter missing metrics: %s", ", ".join(missing))
+    if not rank_parts:
+        return None
+
+    composite = pd.concat(rank_parts, axis=1).mean(axis=1, skipna=True)
+    composite = composite.dropna().rename("fundamental_composite")
+    if composite.empty:
+        return None
+    return daily_rank(composite, pct=True)
+
+
+def apply_fundamental_filter(
+    pred: pd.Series,
+    config: dict,
+    price_data: Optional[pd.DataFrame],
+) -> pd.Series:
+    """Apply cached-fundamental gate or low-weight score overlay.
+
+    Config shape::
+
+        signal:
+          postprocess:
+            fundamental_filter:
+              enabled: true
+              mode: "hard_filter"      # hard_filter | multiplicative_weight | residual_add
+              keep_top_pct: 0.7
+              weight_strength: 0.1
+              metrics:
+                peg: 1
+                revenue_growth: 1
+                profit_growth: 1
+                pb: -1
+                pcf: -1
+              cache_dirs:
+                valuation: "./cache/valuation"
+                financial: "./cache/financial"
+              source_lags:
+                valuation: 0
+                financial: 45
+    """
+    cfg = (
+        config.get("signal", {})
+        .get("postprocess", {})
+        .get("fundamental_filter", {})
+    )
+    if not cfg.get("enabled", False):
+        return pred
+    if pred is None or pred.empty:
+        return pred
+    if price_data is None or price_data.empty:
+        logger.warning("fundamental_filter enabled but price_data is empty; skipped")
+        return pred
+
+    mode = cfg.get("mode", "hard_filter")
+    if mode not in ("hard_filter", "multiplicative_weight", "residual_add"):
+        logger.warning("fundamental_filter mode=%s is unknown; falling back to hard_filter", mode)
+        mode = "hard_filter"
+    keep_top_pct = float(cfg.get("keep_top_pct", 0.7))
+    if not 0 < keep_top_pct <= 1:
+        logger.warning("fundamental_filter keep_top_pct=%s is invalid; skipped", keep_top_pct)
+        return pred
+
+    factor_rank = compute_fundamental_rank(
+        price_data=price_data,
+        metrics_cfg=cfg.get("metrics", {}),
+        cache_dirs=cfg.get("cache_dirs"),
+        source_lags=cfg.get("source_lags"),
+    )
+    if factor_rank is None or factor_rank.empty:
+        logger.warning("fundamental_filter produced no factor rank; skipped")
+        return pred
+    if (
+        isinstance(factor_rank.index, pd.MultiIndex)
+        and isinstance(pred.index, pd.MultiIndex)
+        and set(factor_rank.index.names) == set(pred.index.names)
+        and factor_rank.index.names != pred.index.names
+    ):
+        factor_rank = factor_rank.reorder_levels(pred.index.names)
+
+    weight_strength = float(cfg.get("weight_strength", 0.1))
+    result = _apply_svs_filter_core(
+        pred=pred,
+        factor_rank=factor_rank,
+        effective_mode=mode,
+        keep_top_pct=keep_top_pct,
+        effective_weight=weight_strength,
+    )
+    if mode == "hard_filter":
+        logger.info(
+            "fundamental_filter kept %d/%d signal rows (keep_top_pct=%.2f)",
+            len(result),
+            len(pred),
+            keep_top_pct,
+        )
+    else:
+        logger.info(
+            "fundamental_filter applied %s (weight_strength=%.2f)",
+            mode,
+            weight_strength,
+        )
+    return result
 
 
 def apply_stock_vs_sector_filter(

@@ -369,10 +369,11 @@ def _run_one_fold_universe(
         str(cfg_path),
         "--model",
         "lgbm",
-        "--no-extra-factors",
         "--tag",
         tag,
     ]
+    if not getattr(args, "with_extra_factors", False):
+        train_cmd.append("--no-extra-factors")
     run_command(train_cmd, logs_dir / f"{tag}_train.log")
     model_path = newest_model_for_tag(tag, before_train)
 
@@ -575,6 +576,12 @@ def main(argv: Iterable[str] | None = None) -> None:
              "fold's generated training config. Useful for injecting factor definitions "
              "(e.g. config/ablation_northbound.yaml). Fold-specific keys (market, dates) "
              "always take precedence over this file.",
+    )
+    parser.add_argument(
+        "--with-extra-factors",
+        action="store_true",
+        help="Allow run_train.py to compute factors from the generated fold config. "
+             "Default keeps historical WFV behavior by passing --no-extra-factors.",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 

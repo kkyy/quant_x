@@ -232,8 +232,11 @@ def main(
             pd.concat(result_frames, ignore_index=True)
             if result_frames else pd.DataFrame()
         )
-        if "sharpe" in results_df.columns:
-            sort_cols = ["sharpe"]
+        rank_metric = config.get("backtest", {}).get("rank_metric", "information_ratio")
+        if rank_metric not in results_df.columns:
+            rank_metric = "sharpe"
+        if rank_metric in results_df.columns:
+            sort_cols = [rank_metric]
             ascending = [False]
             if "sharpe_std" in results_df.columns:
                 sort_cols.append("sharpe_std")
@@ -259,7 +262,8 @@ def main(
             top_row = results_df.iloc[0]
             m = {k: top_row[k] for k in
                  ["cum_return","annual_return","annual_vol","sharpe",
-                  "max_drawdown","calmar","win_rate","sortino","n_days"]
+                  "max_drawdown","calmar","win_rate","sortino","n_days",
+                  "excess_annual_return","information_ratio","tracking_error","beta","alpha"]
                  if k in top_row}
             print("\n最优参数详细指标:")
             print(format_metrics(m))

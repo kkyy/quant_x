@@ -10,6 +10,8 @@
 - 额外因子：技术因子、行业/概念轮动因子、挖掘因子、市场状态感知因子（regime）、北向资金、基本面、质押、融资融券、内部交易、分析师预期、股东户数、分红、估值、资产负债表、业绩预告、机构持仓、回购、机构调研、CSV 自定义因子
 - FactorScreener：IC/ICIR 阈值 + 相关性去重，自动过滤低质量因子
 - TopkDropout 策略回测、网格搜索、多 seed 稳健性评估
+- Benchmark 超额收益指标（IR / alpha / tracking error）与默认 IR 排序
+- 回测成交价口径配置（`backtest.deal_price`，支持 close/open 等 qlib 字段）
 - Walk-forward 时间交叉验证（支持自定义折叠 YAML、t 检验显著性）
 - 每日信号生成、目标持仓与买卖差分
 - 定时调仓：收盘后 qlib 数据更新、固定起点回放、真实持仓差分、缓存提醒与 Bark 推送
@@ -127,7 +129,7 @@ cd web/frontend && npm run build         # 输出到 web/frontend/dist/
 - `data/`：qlib 数据加载、股票池过滤（含流动性过滤）、行业数据提供；`utils.py` 是统一代码转换+缓存模块。`data/fetchers/`：15 个领域特定 fetcher（BaseDataFetcher 子类），各自缓存到 `cache/<domain>/`，TTL 可配置；入口为 `run_fetch_data.py --type <type>`。
 - `features/`：因子基类、注册表、技术因子、行业因子、挖掘因子（含 qlib init 保护）、市场状态因子；12 个 akshare 数据驱动因子（pledge, margin, insider, analyst, shareholder, dividend, valuation, balance_sheet, earnings_guidance, institutional, repurchase, visit）、CSV 自定义因子；`library/` 含 FactorScreener / FactorCleaner / FactorEvaluator。
 - `models/`：模型基类、注册表、训练器及各模型实现；训练产物含 `_meta.json` 和 `_feature_importance.json` sidecar。
-- `backtest/`：回测引擎、指标（含基准超额/IR/换手率）、网格搜索、信号诊断（IC 衰减/滚动 IC）、Brinson 归因。
+- `backtest/`：回测引擎（传入 benchmark，支持 `deal_price`）、指标（含基准超额/IR/alpha/换手率）、网格搜索（默认按 `information_ratio` 排序）、信号诊断（IC 衰减/滚动 IC）、Brinson 归因。
 - `signals/`：信号生成（含停牌过滤/price_data 复用）、后处理（含市值中性化、stock-vs-sector 过滤）、定时调仓缓存（`signals/daily_rebalance_cache/`）。
 - `strategy/`：策略级开关与参数逻辑。`regime_switch.py` 负责市场状态识别后的 topk/n_drop/hold_thresh 覆盖与 overlay gating。
 - `notify/`：通知推送渠道。
@@ -156,7 +158,7 @@ DataLoader(qlib D.features / DatasetH)
                                 repurchase, visit, csv]
       → (可选) FactorScreener
   → ModelTrainer (qlib-native 或 custom, 支持 bootstrap bagging)
-  → BacktestEngine / GridSearchBacktest → AutoOptimizer (Claude)
+  → BacktestEngine(benchmark + deal_price) / GridSearchBacktest(IR 排序) → AutoOptimizer (Claude)
   → SignalGenerator (price_data 复用, 停牌过滤)
       → RegimeStrategySwitch (可选，覆盖策略参数 / overlay_enabled)
       → postprocess (industry_neutralize / size_neutralize / stock_vs_sector_filter)
@@ -235,6 +237,8 @@ kept = pipeline.compute_with_screening(price_data, forward_returns=label)
 | 机构调研因子 | `features/visit_factor.py` (visit_count_{w}d, visit_count_chg 等) |
 | CSV 自定义因子 | `features/csv_factor.py` (从 CSV 文件加载自定义因子) |
 | 系统迭代日志 | `docs/strategy_log/system_iteration_log.csv` (全系统迭代周期记录) |
+| Benchmark/IR 回测口径 | `backtest.engine.BacktestEngine` + `backtest.metrics.compute_metrics()` |
+| 回测成交价配置 | `config/base.yaml → backtest.deal_price` |
 
 ### 向后兼容原则
 
@@ -255,6 +259,7 @@ kept = pipeline.compute_with_screening(price_data, forward_returns=label)
 - 临时调试、不准备保留的参数试跑不要写入；只有“值得后续比较或复用”的策略版本才入表。
 - `config/strategy_candidates.yaml` 不是运行时自动加载配置，而是“当前候选结论索引”。后续研究先读它和两个 strategy log，再决定是否新增实验。
 - 近期结论（2026-05）：`csi1000_balanced` / adaptive baseline 是更稳的对照臂；SVS overlay（stock-vs-sector）更像放大器而非稳定 alpha，强窗口可用作参考或激进候选，但不要默认提升为系统化部署线。涉及 overlay 变体时必须写清 baseline、是否启用 SVS、`keep_top_pct`、`max_position_pct`、slippage/成本假设和 WFV 证据。
+- 2026-05-11 起，主回测链路默认带 benchmark 并按 `information_ratio` 排序；记录候选时必须写清 benchmark、`rank_metric`、`deal_price`、成本/滑点假设，避免 Sharpe 与 IR、close 与 open 口径混用。
 
 ### 生成产物（默认不应提交）
 

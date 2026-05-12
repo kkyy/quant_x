@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, date as date_mod
+from datetime import datetime, date as date_mod, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -33,6 +33,64 @@ class CacheStatus(BaseModel):
 def _get_fetcher_registry():
     from quant_ex.run_fetch_data import _FETCHER_REGISTRY
     return _FETCHER_REGISTRY
+
+
+def _normalize_sector_symbol(code: str) -> str:
+    raw = str(code).strip().upper()
+    if not raw:
+        return raw
+    if raw.startswith(("SH", "SZ", "BJ")):
+        return raw
+    if raw.startswith(("6", "9")):
+        return f"SH{raw}"
+    if raw.startswith(("8", "4")):
+        return f"BJ{raw}"
+    return f"SZ{raw}"
+
+
+def _load_sector_groups() -> dict[str, dict]:
+    """Load sectors from the checked-in sector map, with crawler cache fallback."""
+    sector_map_path = CACHE_DIR / "sector_map.json"
+    if sector_map_path.exists():
+        with open(sector_map_path, encoding="utf-8") as f:
+            sector_map = json.load(f)
+        groups: dict[str, dict] = {}
+        for symbol, sector_name in sector_map.items():
+            sector_id = str(sector_name)
+            group = groups.setdefault(
+                sector_id,
+                {"sector_id": sector_id, "sector_name": sector_id, "stocks": []},
+            )
+            group["stocks"].append(_normalize_sector_symbol(symbol))
+        for group in groups.values():
+            group["stocks"] = sorted(set(group["stocks"]))
+        return groups
+
+    crawler_path = Path(__file__).resolve().parents[3] / "crawler" / "data" / "sector_stocks.json"
+    if not crawler_path.exists():
+        return {}
+
+    with open(crawler_path, encoding="utf-8") as f:
+        crawler_data = json.load(f)
+
+    groups = {}
+    for category_data in crawler_data.values():
+        if not isinstance(category_data, dict):
+            continue
+        for sector_id, payload in category_data.items():
+            if not isinstance(payload, dict):
+                continue
+            stocks = [
+                _normalize_sector_symbol(item.get("code", ""))
+                for item in payload.get("stocks", [])
+                if item.get("code")
+            ]
+            groups[sector_id] = {
+                "sector_id": sector_id,
+                "sector_name": payload.get("name") or sector_id,
+                "stocks": sorted(set(stocks)),
+            }
+    return groups
 
 
 @router.get("/cache-status")
@@ -153,15 +211,18 @@ async def stock_quotes(
 
 @router.get("/sectors")
 async def list_sectors():
-    sector_stocks_path = CACHE_DIR / "sector_stocks.json"
-    if not sector_stocks_path.exists():
-        return []
-    with open(sector_stocks_path) as f:
-        data = json.load(f)
-    results = []
-    for sid, stocks in data.items():
-        results.append({"sector_id": sid, "sector_name": sid, "stock_count": len(stocks)})
-    return results
+    groups = _load_sector_groups()
+    return sorted(
+        [
+            {
+                "sector_id": group["sector_id"],
+                "sector_name": group["sector_name"],
+                "stock_count": len(group["stocks"]),
+            }
+            for group in groups.values()
+        ],
+        key=lambda item: (-item["stock_count"], item["sector_name"]),
+    )
 
 
 @router.get("/sectors/rotation")
@@ -171,15 +232,7 @@ async def sector_rotation(windows: str = Query("1,5,20")):
     window_list = [int(w) for w in windows.split(",") if w.strip().isdigit()]
 
     def _compute():
-        import pandas as pd
-        import numpy as np
-
-        sector_stocks_path = CACHE_DIR / "sector_stocks.json"
-        if not sector_stocks_path.exists():
-            return []
-
-        with open(sector_stocks_path) as f:
-            sector_data = json.load(f)
+        sector_data = _load_sector_groups()
 
         if not sector_data:
             return []
@@ -189,16 +242,14 @@ async def sector_rotation(windows: str = Query("1,5,20")):
             return []
 
         today = datetime.now().strftime("%Y-%m-%d")
-        start = (datetime.now() - __import__("datetime").timedelta(days=max(window_list) + 30)).strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=max(window_list) + 30)).strftime("%Y-%m-%d")
 
         results = []
-        for sector_id, stocks in sector_data.items():
+        for sector_id, group in sector_data.items():
+            stocks = group["stocks"]
             if not stocks:
                 continue
-            qlib_instruments = []
-            for s in stocks[:50]:
-                inst = s.replace("SH", "SH").replace("SZ", "SZ")
-                qlib_instruments.append(inst)
+            qlib_instruments = stocks[:50]
 
             try:
                 price_data = loader.load(
@@ -223,7 +274,7 @@ async def sector_rotation(windows: str = Query("1,5,20")):
 
                 results.append({
                     "sector_id": sector_id,
-                    "sector_name": sector_id,
+                    "sector_name": group["sector_name"],
                     "returns": returns,
                 })
             except Exception:
@@ -237,18 +288,16 @@ async def sector_rotation(windows: str = Query("1,5,20")):
 
 @router.get("/sectors/{sector_id}/stocks")
 async def sector_stocks(sector_id: str):
-    sector_stocks_path = CACHE_DIR / "sector_stocks.json"
-    if not sector_stocks_path.exists():
+    groups = _load_sector_groups()
+    group = groups.get(sector_id)
+    if group is None:
         return {"sector_id": sector_id, "sector_name": sector_id, "stocks": []}
-    with open(sector_stocks_path) as f:
-        data = json.load(f)
-    stocks = data.get(sector_id, [])
     from quant_ex.data.utils import load_stock_names
     names = load_stock_names()
     return {
         "sector_id": sector_id,
-        "sector_name": sector_id,
-        "stocks": [{"symbol": s, "name": names.get(s, s)} for s in stocks],
+        "sector_name": group["sector_name"],
+        "stocks": [{"symbol": s, "name": names.get(s, s)} for s in group["stocks"]],
     }
 
 

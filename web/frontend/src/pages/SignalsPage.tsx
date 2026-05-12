@@ -141,13 +141,7 @@ function DailyTab() {
   const [modelPath, setModelPath] = useState("");
   const [account, setAccount] = useState(1000000);
   const [positions, setPositions] = useState("");
-  const [universe, setUniverse] = useState("");
   const [config, setConfig] = useState("");
-  const [positionDate, setPositionDate] = useState("");
-  const [minActionValue, setMinActionValue] = useState<number | undefined>(
-    undefined
-  );
-  const [refreshCache, setRefreshCache] = useState(false);
   const [dryRun, setDryRun] = useState(true);
   const [taskId, setTaskId] = useState<string | null>(null);
 
@@ -164,12 +158,8 @@ function DailyTab() {
       account,
       positions: positions || null,
       dry_run: dryRun,
-      universe: universe || undefined,
-      refresh_cache: refreshCache,
     };
     if (config.trim()) body.config = config.trim();
-    if (positionDate) body.position_date = positionDate;
-    if (minActionValue != null) body.min_action_value = minActionValue;
     const res = await post<{ task_id: string }>("/signals/generate", body);
     setTaskId(res.task_id);
   };
@@ -181,7 +171,7 @@ function DailyTab() {
 
   return (
     <div className="space-y-4 max-w-2xl">
-      <Card title="Daily Signal (Full Params)">
+      <Card title={t("signals.dailySignal")}>
         <div className="space-y-4">
           <div>
             <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
@@ -194,34 +184,110 @@ function DailyTab() {
               searchable
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
-                {t("signals.account")}
-              </p>
-              <NumberInput
-                value={account}
-                onChange={(v) => setAccount(v ?? 1000000)}
-                min={10000}
-                step={100000}
-              />
-            </div>
-            <div>
-              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
-                Universe
-              </p>
-              <Select
-                options={[
-                  { value: "", label: "Default" },
-                  { value: "csi300", label: "CSI 300" },
-                  { value: "csi500", label: "CSI 500" },
-                  { value: "csi800", label: "CSI 800" },
-                  { value: "csi1000", label: "CSI 1000" },
-                ]}
-                value={universe}
-                onChange={setUniverse}
-              />
-            </div>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("signals.account")}
+            </p>
+            <NumberInput
+              value={account}
+              onChange={(v) => setAccount(v ?? 1000000)}
+              min={10000}
+              step={100000}
+            />
+          </div>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("signals.positions")}
+            </p>
+            <textarea
+              value={positions}
+              onChange={(e) => setPositions(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+              placeholder={t("signals.positionsPlaceholder")}
+            />
+          </div>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("signals.configOverride")}
+            </p>
+            <input
+              type="text"
+              value={config}
+              onChange={(e) => setConfig(e.target.value)}
+              placeholder="config/daily_csi1000.yaml"
+              className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+            <input
+              type="checkbox"
+              checked={dryRun}
+              onChange={(e) => setDryRun(e.target.checked)}
+              className="accent-terminal-green"
+            />
+            {t("signals.dryRun")}
+          </label>
+          <button
+            onClick={handleDaily}
+            disabled={!modelPath}
+            className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
+          >
+            {t("signals.generateDailyBtn")}
+          </button>
+        </div>
+      </Card>
+      <TaskStatus taskId={taskId} />
+    </div>
+  );
+}
+
+// ─── Rebalance Tab ─────────────────────────────────────────────────────
+
+function RebalanceTab() {
+  const { t } = useTranslation();
+  const [mock, setMock] = useState(false);
+  const [dryRun, setDryRun] = useState(true);
+  const [config, setConfig] = useState("");
+  const [positions, setPositions] = useState("");
+  const [positionDate, setPositionDate] = useState("");
+  const [minActionValue, setMinActionValue] = useState<number | undefined>(1000);
+  const [skipUpdate, setSkipUpdate] = useState(true);
+  const [force, setForce] = useState(false);
+  const [notifyChannel, setNotifyChannel] = useState("bark");
+  const [taskId, setTaskId] = useState<string | null>(null);
+
+  const handleRun = async () => {
+    const res = await post<{ task_id: string }>("/signals/rebalance", {
+      mock,
+      dry_run: dryRun,
+      config: config.trim() || undefined,
+      positions: positions.trim() || undefined,
+      position_date: positionDate || undefined,
+      min_action_value: minActionValue,
+      skip_update: skipUpdate,
+      force,
+      notify_channel: notifyChannel,
+    });
+    setTaskId(res.task_id);
+  };
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <Card title={t("signals.rebalanceTab")}>
+        <div className="space-y-4">
+          <p className="text-terminal-text-dim text-xs font-mono">{t("signals.rebalanceNote")}</p>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("signals.configOverride")}
+            </p>
+            <input
+              type="text"
+              value={config}
+              onChange={(e) => setConfig(e.target.value)}
+              placeholder="config/daily_csi1000.yaml"
+              className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+            />
           </div>
           <div>
             <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
@@ -238,108 +304,37 @@ function DailyTab() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
-                Config Override
+                {t("signals.positionDate")}
               </p>
-              <input
-                type="text"
-                value={config}
-                onChange={(e) => setConfig(e.target.value)}
-                placeholder="config/daily_csi1000.yaml"
-                className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
-              />
+              <DatePicker value={positionDate} onChange={setPositionDate} />
             </div>
             <div>
               <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
-                Position Date
+                {t("signals.minActionValue")}
               </p>
-              <DatePicker
-                value={positionDate}
-                onChange={setPositionDate}
+              <NumberInput
+                value={minActionValue}
+                onChange={(v) => setMinActionValue(v)}
+                min={0}
+                step={500}
+                placeholder="1000"
               />
             </div>
           </div>
           <div>
             <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
-              Min Action Value
+              {t("signals.notifyChannel")}
             </p>
-            <NumberInput
-              value={minActionValue}
-              onChange={(v) => setMinActionValue(v)}
-              min={0}
-              step={500}
-              placeholder="e.g. 1000"
+            <Select
+              options={[
+                { value: "bark", label: "Bark" },
+                { value: "all", label: t("signals.allChannels") },
+              ]}
+              value={notifyChannel}
+              onChange={setNotifyChannel}
             />
           </div>
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
-              <input
-                type="checkbox"
-                checked={dryRun}
-                onChange={(e) => setDryRun(e.target.checked)}
-                className="accent-terminal-green"
-              />
-              {t("signals.dryRun")}
-            </label>
-            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
-              <input
-                type="checkbox"
-                checked={refreshCache}
-                onChange={(e) => setRefreshCache(e.target.checked)}
-                className="accent-terminal-green"
-              />
-              Refresh Cache
-            </label>
-          </div>
-          <button
-            onClick={handleDaily}
-            disabled={!modelPath}
-            className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
-          >
-            Generate Daily Signal
-          </button>
-        </div>
-      </Card>
-      <TaskStatus taskId={taskId} />
-    </div>
-  );
-}
-
-// ─── Rebalance Tab ─────────────────────────────────────────────────────
-
-function RebalanceTab() {
-  const { t } = useTranslation();
-  const [mock, setMock] = useState(false);
-  const [dryRun, setDryRun] = useState(true);
-  const [config, setConfig] = useState("");
-  const [taskId, setTaskId] = useState<string | null>(null);
-
-  const handleRun = async () => {
-    const res = await post<{ task_id: string }>("/signals/rebalance", {
-      mock,
-      dry_run: dryRun,
-      config: config.trim() || undefined,
-    });
-    setTaskId(res.task_id);
-  };
-
-  return (
-    <div className="space-y-4 max-w-2xl">
-      <Card title={t("signals.rebalanceTab")}>
-        <div className="space-y-4">
-          <p className="text-terminal-text-dim text-xs font-mono">{t("signals.rebalanceNote")}</p>
-          <div>
-            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
-              Config Override
-            </p>
-            <input
-              type="text"
-              value={config}
-              onChange={(e) => setConfig(e.target.value)}
-              placeholder="config/daily_csi1000.yaml"
-              className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
-            />
-          </div>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-6">
             <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
               <input
                 type="checkbox"
@@ -357,6 +352,24 @@ function RebalanceTab() {
                 className="accent-terminal-green"
               />
               {t("signals.dryRun")}
+            </label>
+            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+              <input
+                type="checkbox"
+                checked={skipUpdate}
+                onChange={(e) => setSkipUpdate(e.target.checked)}
+                className="accent-terminal-green"
+              />
+              {t("signals.skipUpdate")}
+            </label>
+            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.target.checked)}
+                className="accent-terminal-green"
+              />
+              {t("signals.forceRun")}
             </label>
           </div>
           <button
@@ -444,8 +457,10 @@ function NotificationTab() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [channel, setChannel] = useState("");
+  const [dryRun, setDryRun] = useState(true);
+  const [confirmSend, setConfirmSend] = useState(false);
   const [sending, setSending] = useState(false);
-  const [result, setResult] = useState<{ success: boolean; error?: string } | null>(null);
+  const [result, setResult] = useState<{ success: boolean; dry_run?: boolean; sent?: boolean; channels?: string[]; error?: string } | null>(null);
 
   const handleSend = async () => {
     setSending(true);
@@ -457,6 +472,8 @@ function NotificationTab() {
           title,
           content,
           channel: channel || undefined,
+          dry_run: dryRun,
+          confirm_send: confirmSend,
         }
       );
       setResult(res);
@@ -497,22 +514,52 @@ function NotificationTab() {
         </div>
         <div>
           <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
-            Channel (optional)
+            {t("signals.notifyChannel")}
           </p>
-          <input
-            type="text"
+          <Select
+            options={[
+              { value: "", label: t("signals.allChannels") },
+              { value: "bark", label: "Bark" },
+              { value: "pushplus", label: "PushPlus" },
+              { value: "dingtalk", label: "DingTalk" },
+              { value: "serverchan", label: "ServerChan" },
+              { value: "wechat_mp", label: "WeChat MP" },
+            ]}
             value={channel}
-            onChange={(e) => setChannel(e.target.value)}
-            placeholder="e.g. wechat, email"
-            className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+            onChange={setChannel}
           />
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+            <input
+              type="checkbox"
+              checked={dryRun}
+              onChange={(e) => {
+                setDryRun(e.target.checked);
+                if (e.target.checked) setConfirmSend(false);
+              }}
+              className="accent-terminal-green"
+            />
+            {t("signals.dryRun")}
+          </label>
+          {!dryRun && (
+            <label className="flex items-center gap-2 text-xs font-mono text-terminal-red cursor-pointer">
+              <input
+                type="checkbox"
+                checked={confirmSend}
+                onChange={(e) => setConfirmSend(e.target.checked)}
+                className="accent-terminal-red"
+              />
+              {t("signals.confirmRealNotify")}
+            </label>
+          )}
         </div>
         <button
           onClick={handleSend}
-          disabled={sending || !title}
+          disabled={sending || !title || (!dryRun && !confirmSend)}
           className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm disabled:opacity-30"
         >
-          {sending ? t("common.sending") : t("signals.sendTest")}
+          {sending ? t("common.sending") : dryRun ? t("signals.previewTest") : t("signals.sendTest")}
         </button>
         {result && (
           <div
@@ -522,7 +569,11 @@ function NotificationTab() {
                 : "bg-terminal-red-glow text-terminal-red border-terminal-red"
             }`}
           >
-            {result.success ? t("common.sent") : `Error: ${result.error}`}
+            {result.success
+              ? result.dry_run
+                ? `${t("signals.previewOk")} ${result.channels?.join(", ") || t("common.noData")}`
+                : t("common.sent")
+              : `Error: ${result.error}`}
           </div>
         )}
       </div>

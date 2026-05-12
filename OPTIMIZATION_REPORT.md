@@ -1,8 +1,8 @@
 # quant_ex 优化实施报告
 
-> 最新更新：2026-05-07（第三批更新）
+> 最新更新：2026-05-11（第四批更新）
 > 基础：PROJECT_AUDIT.md 审计报告
-> 状态：**全部 31 项已完成（第一批 15 项 + 第二批 11 项 + 第三批 5 项）**
+> 状态：**审计高优先级主链路继续收敛（第一批 15 项 + 第二批 11 项 + 第三批 5 项 + 第四批 5 项）**
 
 ---
 
@@ -88,6 +88,30 @@
 
 ---
 
+### BUG-A01 ✅ Benchmark 主链路接入（第四批）
+
+**问题：** `backtest/metrics.py` 已能计算超额收益，但 `BacktestEngine` 调 qlib 时仍传 `benchmark=None`，导致主回测报告没有 `bench`，网格搜索排序仍偏绝对 Sharpe。
+
+**修复方式：**
+- `BacktestEngine` 从 `market.benchmark` / `backtest.benchmark` 读取基准并传给 `backtest_daily()`
+- `compute_metrics()` 自动读取 qlib report 的 `bench` 列，输出 `excess_annual_return`、`information_ratio`、`tracking_error`、`beta`、`alpha`
+- `GridSearchBacktest` 默认按 `backtest.rank_metric: information_ratio` 排序，无 IR 时退回 Sharpe
+- `run_backtest.py` 的最优参数详情显示超额指标
+
+**变更文件：** `backtest/engine.py`、`backtest/metrics.py`、`backtest/grid_search.py`、`run_backtest.py`、`config/base.yaml`
+
+---
+
+### BUG-A06 ✅ 调仓脚本股票名称加载去重（第四批）
+
+**问题：** `run_scheduled_rebalance.py` 保留了本地 `_load_stock_names()` / `_to_qlib_code()`，与 `data/utils.py` 的权威实现重复。
+
+**修复方式：** 改为直接使用 `data.utils.load_stock_names()`，统一 B 股/北交所代码转换和缓存逻辑。
+
+**变更文件：** `run_scheduled_rebalance.py`
+
+---
+
 ## 二、性能优化
 
 ### OPT-02 ✅ akshare 行业数据并发获取
@@ -95,6 +119,14 @@
 `ThreadPoolExecutor(max_workers=8)`，~5-6x 加速。
 
 **变更文件：** `data/sector.py`
+
+---
+
+### OPT-A02 ✅ 回测成交价配置化（第四批）
+
+`backtest.deal_price` 已接入 qlib `SimulatorExecutor.exchange_kwargs`。默认保持历史 `close` 口径，研究中可通过配置切换为 `open` 做次日执行口径对照。
+
+**变更文件：** `backtest/engine.py`、`config/base.yaml`
 
 ---
 
@@ -273,6 +305,14 @@ Top-50 特征重要性自动保存为 `models/{stem}_feature_importance.json`。
 
 ---
 
+### CAP-16 ✅ 持仓累计 P&L 全局建仓日口径（第四批）
+
+`_compute_portfolio_pnl()` 新增 `default_entry_date`。当 `--positions` 使用旧格式但同时传入 `--position-date` 时，累计收益会按全局建仓日计算，不再退回成前一日收益。
+
+**变更文件：** `run_scheduled_rebalance.py`
+
+---
+
 ## 四、新增过滤与后处理能力
 
 ### GAP-04 ✅ Walk-forward 统计显著性
@@ -337,6 +377,16 @@ Top-50 特征重要性自动保存为 `models/{stem}_feature_importance.json`。
 | 个股持股天数 | 可观测性 | 每只股票显示持有天数和盈亏 |
 | 逐股 hold 保护 | 安全性 | 不同建仓日期独立计算保护期 |
 
+### 第四批（2026-05-11）
+
+| 项目 | 类别 | 影响 |
+|------|------|------|
+| Benchmark 主链路 | 准确性 | qlib report 默认带基准收益，指标输出 IR/alpha/tracking error |
+| IR 默认排序 | 研究口径 | 网格搜索优先选择相对基准表现更强的参数 |
+| deal_price 配置化 | 执行一致性 | 支持 close/open 成交价口径对照 |
+| 调仓名称工具去重 | 可维护性 | 定时调仓复用 `data.utils.load_stock_names()` |
+| 全局建仓日累计 P&L | 准确性 | 旧格式 `--positions` + `--position-date` 也能显示真实累计收益 |
+
 ---
 
 ## 六、未实施项说明
@@ -345,7 +395,7 @@ Top-50 特征重要性自动保存为 `models/{stem}_feature_importance.json`。
 |------|------|
 | CAP-02 质量成长类基本面因子 | 估值类已实现，质量/成长类仍待扩展 |
 | CAP-07 持仓止损/波动率目标 | 需修改 qlib 策略层，超出当前架构边界 |
-| GAP-02 次日开盘价成交 | 需 qlib 层配置 `deal_price: open` |
+| GAP-02 次日开盘价成交 | 已支持 `backtest.deal_price: open`，仍需对候选策略做统一复跑并沉淀实盘口径模板 |
 | GAP-03 历史板块快照 | 需构建历史成分股时间序列数据库，工程量大 |
 | BUG-09 轻微隐患 | 风险低，不影响核心功能，标记为 future work |
 
@@ -354,4 +404,5 @@ Top-50 特征重要性自动保存为 `models/{stem}_feature_importance.json`。
 *第一批：修改/新建 13 文件，修复 7 缺陷，完成 4 优化，新增 3 能力。*
 *第二批：修改/新建 12 文件，修复 1 缺陷，完成 5 优化，新增 5 能力。*
 *第三批：修改/新建 ~50 文件，修复 1 缺陷，新增 6 能力。*
-*累计修改/新建 ~75 文件，全面提升框架的健壮性、性能、可观测性、可视化和量化能力。*
+*第四批：修改/新建 8 文件，修复 3 个审计问题，新增/完善 2 个研究口径能力。*
+*累计修改/新建 ~83 文件，全面提升框架的健壮性、性能、可观测性、可视化和量化能力。*

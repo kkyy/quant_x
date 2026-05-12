@@ -1,4 +1,6 @@
 import logging
+import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -38,7 +40,49 @@ class GridSearchRequest(BaseModel):
     grid_workers: int = 1
     output_csv: Optional[str] = None
     slippage_multipliers: Optional[list[float]] = None
+    slippage_sensitivity: bool = False
     markets: Optional[list[str]] = None
+    explore_markets: bool = False
+
+
+def _build_grid_cmd(req: GridSearchRequest) -> list[str]:
+    argv = [
+        sys.executable,
+        "run_backtest.py",
+        "--model-path",
+        req.model_path,
+        "--topk",
+        ",".join(str(x) for x in req.topk),
+        "--n-drop",
+        ",".join(str(x) for x in req.n_drop),
+        "--hold-thresh",
+        ",".join(str(x) for x in req.hold_thresh),
+        "--market",
+        req.market,
+    ]
+    if req.start:
+        argv.extend(["--start", req.start])
+    if req.end:
+        argv.extend(["--end", req.end])
+    if req.multi_seed:
+        argv.append("--seeds")
+    if req.optimize:
+        argv.append("--optimize")
+    if req.n_iters != 3:
+        argv.extend(["--n-iters", str(req.n_iters)])
+    if req.grid_workers != 1:
+        argv.extend(["--grid-workers", str(req.grid_workers)])
+    if req.output_csv:
+        argv.extend(["--output-csv", req.output_csv])
+    if req.slippage_sensitivity:
+        argv.append("--slippage-sensitivity")
+    if req.slippage_multipliers:
+        argv.extend(["--slippage-multipliers", ",".join(str(x) for x in req.slippage_multipliers)])
+    if req.markets:
+        argv.extend(["--markets", ",".join(req.markets)])
+    if req.explore_markets:
+        argv.append("--explore-markets")
+    return argv
 
 
 @router.post("/grid")
@@ -46,31 +90,8 @@ async def start_grid_search(req: GridSearchRequest):
     tm = get_task_manager()
 
     def _grid():
-        import subprocess, sys
-        argv = [sys.executable, "run_backtest.py",
-                "--model-path", req.model_path,
-                "--topk", ",".join(str(x) for x in req.topk),
-                "--n-drop", ",".join(str(x) for x in req.n_drop),
-                "--hold-thresh", ",".join(str(x) for x in req.hold_thresh),
-                "--market", req.market]
-        if req.start:
-            argv.extend(["--start", req.start])
-        if req.end:
-            argv.extend(["--end", req.end])
-        if req.multi_seed:
-            argv.append("--seeds")
-        if req.optimize:
-            argv.append("--optimize")
-        if req.n_iters != 3:
-            argv.extend(["--n-iters", str(req.n_iters)])
-        if req.grid_workers != 1:
-            argv.extend(["--grid-workers", str(req.grid_workers)])
-        if req.output_csv:
-            argv.extend(["--output-csv", req.output_csv])
-        if req.slippage_multipliers:
-            argv.extend(["--slippage-multipliers", ",".join(str(x) for x in req.slippage_multipliers)])
-        if req.markets:
-            argv.extend(["--markets", ",".join(req.markets)])
+        import subprocess
+        argv = _build_grid_cmd(req)
         result = subprocess.run(argv, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             raise RuntimeError(f"Grid search failed (exit {result.returncode}): {result.stderr[-500:]}")
@@ -132,32 +153,45 @@ class WFVRequest(BaseModel):
     train_config: Optional[str] = None
 
 
+def _build_wfv_cmd(req: WFVRequest) -> list[str]:
+    cmd = [
+        sys.executable,
+        "run_walk_forward_validation.py",
+        "--train-universes",
+        ",".join(req.train_universes),
+        "--eval-market",
+        req.eval_market,
+        "--topk",
+        ",".join(str(x) for x in req.topk),
+        "--n-drop",
+        ",".join(str(x) for x in req.n_drop),
+        "--hold-thresh",
+        ",".join(str(x) for x in req.hold_thresh),
+        "--workers",
+        str(req.workers),
+    ]
+    if req.seeds:
+        cmd.append("--seeds")
+    if req.run_id:
+        cmd.extend(["--run-id", req.run_id])
+    if req.grid_workers != 1:
+        cmd.extend(["--grid-workers", str(req.grid_workers)])
+    if req.robust_weights:
+        cmd.extend(["--robust-weights", json.dumps(req.robust_weights)])
+    if req.folds_config:
+        cmd.extend(["--folds-config", req.folds_config])
+    if req.train_config:
+        cmd.extend(["--train-config", req.train_config])
+    return cmd
+
+
 @router.post("/walk-forward")
 async def start_wfv(req: WFVRequest):
     tm = get_task_manager()
 
     def _wfv():
-        import subprocess, sys
-        cmd = [sys.executable, "run_walk_forward_validation.py",
-               "--train-universes", ",".join(req.train_universes),
-               "--eval-market", req.eval_market,
-               "--topk", ",".join(str(x) for x in req.topk),
-               "--n-drop", ",".join(str(x) for x in req.n_drop),
-               "--hold-thresh", ",".join(str(x) for x in req.hold_thresh),
-               "--workers", str(req.workers)]
-        if req.seeds:
-            cmd.append("--seeds")
-        if req.run_id:
-            cmd.extend(["--run-id", req.run_id])
-        if req.grid_workers != 1:
-            cmd.extend(["--grid-workers", str(req.grid_workers)])
-        if req.robust_weights:
-            import json
-            cmd.extend(["--robust-weights", json.dumps(req.robust_weights)])
-        if req.folds_config:
-            cmd.extend(["--folds-config", req.folds_config])
-        if req.train_config:
-            cmd.extend(["--train-config", req.train_config])
+        import subprocess
+        cmd = _build_wfv_cmd(req)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             raise RuntimeError(f"Walk-forward validation failed (exit {result.returncode}): {result.stderr[-500:]}")

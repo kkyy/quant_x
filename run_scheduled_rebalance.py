@@ -21,6 +21,7 @@ from quant_ex.backtest.engine import BacktestEngine
 from quant_ex.data.loader import DataLoader
 from quant_ex.data.sector import SectorDataProvider
 from quant_ex.data.universe import UniverseFilter
+from quant_ex.data.utils import load_stock_names
 from quant_ex.notify.pusher import NotificationPusher
 from quant_ex.signals.postprocess import postprocess_requires_price_data, postprocess_signal
 from quant_ex.strategy.regime_switch import apply_overlay_gating
@@ -371,11 +372,13 @@ def _compute_portfolio_pnl(
     positions: Dict[str, Dict[str, Any]],
     trade_date: str,
     trading_calendar: List[pd.Timestamp],
+    default_entry_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Compute cumulative & daily P&L for actual positions.
 
-    When entry_date is provided, cumulative P&L is calculated from the
-    entry_date closing price. Otherwise falls back to previous-day price.
+    When entry_date is provided, cumulative P&L is calculated from that
+    closing price. Otherwise default_entry_date is used when available, and
+    finally previous-day price is used as a compatibility fallback.
 
     Returns dict with: total_value, cum_pnl, cum_return, daily_pnl, daily_return,
     and per_stock list with instrument/shares/entry_date/cost_price/prev_price/cur_price/
@@ -396,7 +399,7 @@ def _compute_portfolio_pnl(
         if prev_price is None or prev_price <= 0:
             prev_price = cur_price
         # Determine cost basis: entry_date close if available, else prev close
-        entry_str = info.get("entry_date")
+        entry_str = info.get("entry_date") or default_entry_date
         cost_price = prev_price
         days_held = None
         if entry_str:
@@ -688,6 +691,9 @@ def _run_real_rebalance(
             account_value=acct, max_position_pct=max_pct,
         )
     actions = _diff_positions(previous, target)
+    # Save pre-hold-protection target for display
+    model_target = dict(target) if actual_positions is not None else None
+    portfolio_position_date = None
     # hold_thresh 保护：若传入了 --positions 和 --position-date，过滤保护期内的卖出动作。
     if actual_positions is not None and trading_calendar:
         raw_position_date = cfg.get("position_date")
@@ -697,6 +703,7 @@ def _run_real_rebalance(
             # 默认：--positions 是在 trade_date 的前一个交易日建立的
             prev_str, _ = _previous_trading_day(pd.Timestamp(trade_date), trading_calendar)
             position_date_ts = pd.Timestamp(prev_str).normalize()
+        portfolio_position_date = position_date_ts.strftime("%Y-%m-%d")
         actions, target = _apply_hold_protection(
             actions=actions,
             target=target,
@@ -721,12 +728,17 @@ def _run_real_rebalance(
             )
         actions = filtered
     metrics = _last_metrics(report)
-    name_map = _load_stock_names()
+    name_map = load_stock_names()
     sector_map = _load_sector_map(config)
     # Compute real portfolio P&L from actual positions when available
     portfolio_pnl = None
     if actual_positions is not None and trading_calendar:
-        portfolio_pnl = _compute_portfolio_pnl(actual_positions, trade_date, trading_calendar)
+        portfolio_pnl = _compute_portfolio_pnl(
+            actual_positions,
+            trade_date,
+            trading_calendar,
+            default_entry_date=portfolio_position_date,
+        )
     base_report = _format_report(
         trade_date=trade_date,
         next_trade_date=next_trade_date,
@@ -739,6 +751,7 @@ def _run_real_rebalance(
         name_map=name_map,
         sector_map=sector_map,
         portfolio_pnl=portfolio_pnl,
+        model_target=model_target,
     )
     # Overlay drawdown monitoring
     drawdown = _compute_cumulative_drawdown(report)
@@ -804,7 +817,7 @@ def _mock_report(cfg: Dict[str, Any], trade_date: str, next_trade_date: str) -> 
         "SH603197": {"shares": 1000, "price": 29.30, "value": 29_300},
     }
     actions = _diff_positions(previous, target)
-    name_map = _load_stock_names()
+    name_map = load_stock_names()
     sector_map = _load_sector_map({})
     return _format_report(
         trade_date=trade_date,
@@ -1016,42 +1029,6 @@ def _rebuild_signal_for_reminder(
     return _load_latest_signal_cache(run_cfg)
 
 
-def _to_qlib_code(code: str) -> str:
-    code = str(code).strip()
-    if len(code) != 6 or not code.isdigit():
-        return code
-    if code.startswith("920"):
-        return f"BJ{code}"
-    prefix = int(code[0])
-    if prefix in (0, 2, 3):
-        return f"SZ{code}"
-    if prefix in (6, 9):
-        return f"SH{code}"
-    if prefix in (4, 8):
-        return f"BJ{code}"
-    return code
-
-
-def _load_stock_names() -> Dict[str, str]:
-    path = PROJECT_ROOT / "crawler" / "data" / "sector_stocks.json"
-    if not path.exists():
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        names = {}
-        for category in data.values():
-            for sector in category.values():
-                for stock in sector.get("stocks", []):
-                    code = stock.get("code", "")
-                    name = stock.get("name", "")
-                    if code and name:
-                        names[_to_qlib_code(code)] = name
-        return names
-    except Exception:
-        return {}
-
-
 def _load_sector_map(config: dict) -> Dict[str, str]:
     try:
         provider = SectorDataProvider(config)
@@ -1072,6 +1049,7 @@ def _format_report(
     name_map: Optional[Dict[str, str]] = None,
     sector_map: Optional[Dict[str, str]] = None,
     portfolio_pnl: Optional[Dict[str, Any]] = None,
+    model_target: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> str:
     title = "量化调仓信号"
     if mock:
@@ -1149,6 +1127,29 @@ def _format_report(
                 hold_str = f" 持{sp['days_held']}日" if sp["days_held"] is not None else ""
                 parts += f"{pnl_str}{hold_str}"
             lines.append(parts)
+
+    # Show model's original target (before hold protection) when symbols or shares differ.
+    target_changed = False
+    if model_target is not None:
+        target_changed = set(model_target) != set(target) or any(
+            abs(
+                float(model_target.get(inst, {}).get("shares", 0))
+                - float(target.get(inst, {}).get("shares", 0))
+            ) >= 1
+            for inst in set(model_target) & set(target)
+        )
+    if model_target is not None and target_changed:
+        lines.append("")
+        lines.append("模型选股目标（hold 保护前的回测选股）:")
+        for inst, info in sorted(model_target.items()):
+            name = name_map.get(inst, "") if name_map else ""
+            sector = sector_map.get(inst, "") if sector_map else ""
+            name_str = f" {name}" if name else ""
+            sec_str = f" [{sector}]" if sector else ""
+            protected_mark = " (受保护)" if inst in target else " (未持有)"
+            lines.append(
+                f"{inst}{name_str}{sec_str}: {info['shares']:.0f}股 约{info['value']:,.0f}元{protected_mark}"
+            )
     return "\n".join(lines)
 
 

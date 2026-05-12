@@ -10,6 +10,8 @@
 - LightGBM / XGBoost / Ridge / Lasso / MLP 多模型训练
 - LightGBM bootstrap ensemble / bagging
 - TopkDropout 策略回测、参数网格搜索、多 seed 稳健性评估
+- Benchmark 超额收益指标（IR / alpha / tracking error）与默认 IR 排序
+- 回测成交价口径配置（`backtest.deal_price`，支持 close/open 等 qlib 字段）
 - Walk-forward 时间交叉验证，支持自定义折叠 YAML
 - 因子流水线：technical / sector / mined / regime / northbound / fundamental / csv 自定义因子
 - FactorScreener：基于 IC / ICIR / 相关性去重的因子筛选
@@ -253,7 +255,7 @@ export ANTHROPIC_API_KEY="..."
 ./.venv/bin/python run_backtest.py --optimize --n-iters 3
 ```
 
-常见输出指标包括：`annual_return`、`sharpe`、`max_drawdown`、`calmar`、`win_rate`、`ic`、`icir`、`rank_ic`、`rank_icir`。
+常见输出指标包括：`annual_return`、`sharpe`、`max_drawdown`、`calmar`、`win_rate`、`excess_annual_return`、`information_ratio`、`tracking_error`、`alpha`、`beta`、`ic`、`icir`、`rank_ic`、`rank_icir`。网格搜索默认按 `backtest.rank_metric: information_ratio` 排序；无 benchmark 指标时退回 Sharpe。
 
 ---
 
@@ -472,6 +474,19 @@ strategy:
 
 `run_daily.py` 和 `run_scheduled_rebalance.py` 都会尝试自动检测并应用该切换。
 
+### 回测 benchmark 与成交价口径
+
+```yaml
+market:
+  benchmark: "SH000300"
+
+backtest:
+  deal_price: "close"              # 兼容历史结果；正式候选建议额外用 open 复跑
+  rank_metric: "information_ratio" # 无 IR 时自动退回 sharpe
+```
+
+`BacktestEngine` 会把 `market.benchmark` 传给 qlib，回测报告的 `bench` 列会自动进入 `compute_metrics()`，输出 IR、alpha、tracking error 等相对基准指标。
+
 ### 流动性过滤与集中度
 
 ```yaml
@@ -569,7 +584,7 @@ config/base.yaml → config/model.yaml → config/notify.yaml → --config 覆�
 
 常见配置职责：
 
-- `config/base.yaml`：市场、策略、回测、daily_rebalance、信号处理
+- `config/base.yaml`：市场、benchmark、策略、回测成交口径、daily_rebalance、信号处理
 - `config/model.yaml`：模型参数、额外因子、ensemble
 - `config/notify.yaml`：通知渠道配置，建议从 `config/notify.yaml.example` 复制
 - `config/strategy_candidates.yaml`：长期保留的研究结论，不会被自动加载

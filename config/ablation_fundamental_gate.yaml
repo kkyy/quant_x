@@ -1,0 +1,29 @@
+# Fundamental postprocess ablation: use selected cached fundamentals as a gate.
+#
+# This does NOT append raw fundamental columns to model training.  It keeps the
+# existing model score, then removes the bottom 30% by a low-dimensional
+# fundamental composite after daily rank transform.
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    fundamental_filter:
+      enabled: true
+      mode: "hard_filter"
+      keep_top_pct: 0.70
+      metrics:
+        # Signs come from the 2026-05-11 cache-only audit:
+        # positive IC => higher is better; negative IC => lower is better.
+        peg: 1
+        revenue_growth: 1
+        profit_growth: 1
+        pb: -1
+        pcf: -1
+      cache_dirs:
+        valuation: "./cache/valuation"
+        financial: "./cache/financial"
+      source_lags:
+        valuation: 0
+        financial: 45

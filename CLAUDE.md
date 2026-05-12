@@ -31,6 +31,8 @@ python run_backtest.py --model-path models/lgbm_*.pkl
 python run_backtest.py --topk 5,10,15 --n-drop 1,3,5 --seeds  # multi-seed robustness
 python run_backtest.py --output-csv results/my.csv   # write to specific path (for WFV isolation)
 python run_backtest.py --optimize --n-iters 3        # requires ANTHROPIC_API_KEY
+# Grid search ranks by backtest.rank_metric (default information_ratio; falls back to sharpe).
+# For practical execution studies, set backtest.deal_price: "open" in an override config.
 
 # Walk-forward validation
 python run_walk_forward_validation.py \
@@ -122,7 +124,8 @@ Feature Layer   Alpha158 (qlib native) + FactorPipeline [technical, sector, mine
 Model Layer     ModelTrainer -> qlib-native path (MLflow .recorder) or custom path (.pkl)
                 LGBMAlphaModel supports bootstrap bagging (bagging_fraction param)
 Backtest Layer  BacktestEngine (qlib TopkDropoutStrategy) -> GridSearchBacktest -> AutoOptimizer (Claude)
-                backtest/metrics.py: benchmark excess return, IR, turnover
+                BacktestEngine passes market.benchmark/backtest.benchmark into qlib and supports backtest.deal_price
+                backtest/metrics.py: benchmark excess return, IR, tracking error, alpha/beta, turnover
                 Output metrics: annual_return, sharpe, max_drawdown, calmar, win_rate, ic, icir, rank_ic, rank_icir
                 backtest/attribution.py: Brinson sector attribution
                 backtest/signal_diagnostics.py: IC decay, rolling IC monitor
@@ -241,6 +244,11 @@ Requirements:
 - `industry_neutralize`: subtract same-day sector mean
 - `size_neutralize`: OLS residualization against log-market-cap (default disabled, falls back to qlib `$market_cap` if `size_data` not passed)
 
+### Backtest benchmark/execution options (`backtest`)
+- `deal_price`: qlib execution price field, default `"close"` for historical compatibility; use `"open"` for next-day execution sensitivity checks
+- `rank_metric`: grid-search ranking metric, default `"information_ratio"`; automatically falls back to `sharpe` if the metric is unavailable
+- `benchmark`: optional override benchmark; otherwise `market.benchmark` is passed into qlib and report `bench` feeds `compute_metrics()`
+
 ### Portfolio concentration options (`strategy.portfolio`)
 - `max_position_pct`: single-stock weight cap (WARNING logged when exceeded)
 - `concentration_hard_limit`: absolute hard cap (ERROR logged when exceeded)
@@ -354,6 +362,7 @@ Create an override YAML (e.g. `config/daily_csi1000.yaml`) and pass via `--confi
 - The authoritative system-level iteration history is `docs/strategy_log/system_iteration_log.csv`. Each row records one full system-iteration cycle: changes made, baseline scope, pre/post best Sharpe, diagnostic scores, decision, and convergence status. Cross-referenced with strategy_iteration_log.csv via the `strategy_iteration_ids` column.
 - Only durable research conclusions belong there: baseline candidates, overlay iterations, promoted/fallback strategies, and ablation decisions worth revisiting.
 - Temporary debug runs should stay in `optimization_results/` and should not be added unless they change the long-term decision surface.
+- Record benchmark, `rank_metric`, `deal_price`, cost/slippage assumptions, and whether SVS overlay is enabled for any durable candidate.
 
 ## Scheduled Rebalance Notes
 

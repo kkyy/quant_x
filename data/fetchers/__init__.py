@@ -1,6 +1,7 @@
 from .base import BaseDataFetcher
 from .northbound_fetcher import NorthboundFetcher
 from .financial_fetcher import FinancialFetcher
+from .insider_fetcher import InsiderTradeFetcher
 from .margin_fetcher import MarginTradeFetcher
 from .analyst_fetcher import AnalystForecastFetcher
 from .pledge_fetcher import PledgeFetcher
@@ -14,4 +15,4 @@ from .visit_fetcher import InstitutionalVisitFetcher
 from .repurchase_fetcher import RepurchaseFetcher
 from .sw1_fetcher import SW1IndustryFetcher
 
-__all__ = ["BaseDataFetcher", "NorthboundFetcher", "FinancialFetcher", "MarginTradeFetcher", "AnalystForecastFetcher", "PledgeFetcher", "ValuationFetcher", "ShareholderCountFetcher", "DividendFetcher", "InstitutionalHoldFetcher", "BalanceSheetFetcher", "EarningsGuidanceFetcher", "InstitutionalVisitFetcher", "RepurchaseFetcher", "SW1IndustryFetcher"]
+__all__ = ["BaseDataFetcher", "NorthboundFetcher", "FinancialFetcher", "InsiderTradeFetcher", "MarginTradeFetcher", "AnalystForecastFetcher", "PledgeFetcher", "ValuationFetcher", "ShareholderCountFetcher", "DividendFetcher", "InstitutionalHoldFetcher", "BalanceSheetFetcher", "EarningsGuidanceFetcher", "InstitutionalVisitFetcher", "RepurchaseFetcher", "SW1IndustryFetcher"]

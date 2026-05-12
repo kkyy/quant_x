@@ -1,0 +1,28 @@
+# Fundamental postprocess ablation: low-weight fundamental score overlay.
+#
+# This does NOT append raw fundamental columns to model training.  It blends a
+# cached fundamental composite into the already ranked model score with 10%
+# strength, then re-ranks cross-sectionally.
+
+signal:
+  postprocess:
+    enabled: true
+    daily_transform: "rank"
+    rank_pct: true
+    fundamental_filter:
+      enabled: true
+      mode: "residual_add"
+      keep_top_pct: 1.0
+      weight_strength: 0.10
+      metrics:
+        peg: 1
+        revenue_growth: 1
+        profit_growth: 1
+        pb: -1
+        pcf: -1
+      cache_dirs:
+        valuation: "./cache/valuation"
+        financial: "./cache/financial"
+      source_lags:
+        valuation: 0
+        financial: 45

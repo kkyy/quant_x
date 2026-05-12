@@ -12,6 +12,138 @@
 
 ---
 
+## 2026-05-11 Functional Audit and Patch Result
+
+### Audit Scope
+
+- Production FastAPI static serving and direct browser routes: `/`, `/data-explorer`, `/research`, `/models`, `/backtest`, `/signals`, `/config`, `/system`.
+- Core read-only API endpoints used by first-screen page loads: system health/runtime/tasks, data cache status/sectors, model list/registry, backtest results, factors, signal history/regime.
+- Frontend production build and TypeScript compile through `npm run build`.
+- Headless Chrome render smoke test for every top-level route, checking that React mounted, page headings rendered, and no `Not Found` / application error / stale placeholder text appeared.
+
+### Issues Found
+
+- **P0 - SPA deep links 404 in production.** FastAPI mounted `StaticFiles` at `/`, but direct routes such as `/models`, `/backtest`, and `/signals` returned `{"detail":"Not Found"}` instead of serving `index.html`. This broke refresh, bookmarks, and direct navigation.
+- **P1 - Data Explorer sectors were empty.** The sector endpoints only read `cache/sector_stocks.json`, but the project has `cache/sector_map.json` and `crawler/data/sector_stocks.json`; the expected cache file was absent.
+- **P1 - Backtest benchmark curves missed qlib CSVs.** Chart parsing only recognized `benchmark_return`; qlib-style daily reports commonly use `bench`.
+- **P2 - Rebalance page showed stale placeholder copy.** The tab is connected to `POST /api/signals/rebalance`, but the UI still said it was a placeholder.
+
+### Changes Applied
+
+- Replaced root static mount behavior in `web/api/app.py` with explicit `/assets` serving plus SPA fallback for non-API paths.
+- Added sector group loading in `web/api/routers/data.py` from `cache/sector_map.json`, with fallback to `crawler/data/sector_stocks.json`; sector list, constituents, and rotation now share the same source.
+- Updated `web/api/services/chart_service.py` to recognize `benchmark_return`, `bench`, or `benchmark`, and to expose additional excess/IR-style metric columns when present.
+- Updated `signals.rebalanceNote` in both `web/frontend/src/i18n/en.json` and `web/frontend/src/i18n/zh.json`.
+- Added `test/test_web_dashboard.py` covering SPA fallback, API route preservation, sector-map-backed sectors, and qlib `bench` curve parsing.
+
+### Verification Completed
+
+```bash
+./.venv/bin/python -m pytest test/test_web_dashboard.py
+./.venv/bin/python -c "from web.api.app import app; print('OK', len(app.routes))"
+cd web/frontend && npm run build
+```
+
+Results:
+
+- `test/test_web_dashboard.py`: 4 passed.
+- FastAPI import: `OK 55`.
+- Frontend build: passed; existing Vite chunk-size warning remains.
+- HTTP direct-route check: all top-level routes returned `200 text/html` and contained React root markup.
+- CDP render smoke test: all top-level routes rendered their expected H1 (`总览`, `数据探索`, `因子研究`, `模型`, `回测`, `信号`, `配置`, `系统`) with no `Not Found`, app error, or stale placeholder text.
+- Core API smoke test: health/runtime/tasks/cache-status/sectors/models/registry/backtest-results/factors/signal-history/regime returned 200. Sectors returned 340 groups from local cache.
+
+### Remaining Iteration Plan
+
+- **Next P1:** Improve long-task parameter fidelity. Audit Web request schemas against CLI options for backtest grid, WFV, signal generation, and rebalance; pass through currently ignored fields or remove inactive controls.
+- **Next P2:** Add route-level frontend tests for tab switching and form validation once the project has a browser test runner installed.
+- **Next P2:** Split the production JS bundle with dynamic route imports; current build is correct but emits a large chunk warning.
+
+---
+
+## 2026-05-11 Safety and Parameter Fidelity Pass
+
+### Issues Found
+
+- **P1 - Notification test could send real notifications immediately.** `POST /api/signals/notify-test` called `NotificationPusher.send()` directly, and the UI button did not require a dry-run/confirmation distinction.
+- **P1 - Rebalance Web route omitted important CLI safety and position parameters.** The CLI supports `--positions`, `--position-date`, `--min-action-value`, `--skip-update`, `--force`, and `--notify-channel`, but the Web route exposed only mock/dry-run/config.
+- **P2 - Daily signal tab showed unsupported controls.** The page displayed universe/cache/position-date/min-action-value controls that `run_daily.py` does not support, so those settings were silently ignored.
+
+### Changes Applied
+
+- Changed notification testing to default to dry-run preview. Real notification delivery now requires `dry_run=false` and `confirm_send=true`.
+- Added notification channel filtering for preview/send paths (`bark`, `pushplus`, `dingtalk`, `serverchan`, `wechat_mp`, `all`).
+- Added Web rebalance support for positions, position date, min action value, skip update, force run, and notify channel. The UI defaults `skip_update=true` and `dry_run=true` to avoid accidental data updates or real pushes.
+- Removed unsupported daily signal controls from the frontend and wired config override through to `run_daily.main(config_path=...)`.
+- Added regression coverage for notification dry-run behavior, real-send confirmation, and rebalance command construction.
+
+### Verification Completed
+
+```bash
+./.venv/bin/python -m pytest test/test_web_dashboard.py
+./.venv/bin/python -c "from web.api.app import app; print('OK', len(app.routes))"
+cd web/frontend && npm run build
+```
+
+Results:
+
+- `test/test_web_dashboard.py`: 7 passed.
+- FastAPI import: `OK 55`.
+- Frontend build: passed; existing Vite chunk-size warning remains.
+- Local API smoke:
+  - `GET /api/system/health` returned 200.
+  - `POST /api/signals/notify-test` with default payload returned dry-run preview and `sent=false`.
+  - `POST /api/signals/notify-test` with `dry_run=false` but no confirmation returned 400.
+- CDP render smoke: `/signals`, `/backtest`, `/data-explorer`, and `/config` rendered their expected H1 with no `Not Found`, app error, or stale placeholder text.
+
+### Remaining Iteration Plan
+
+- **Next P2:** Add browser-level interaction tests after introducing a committed test runner.
+- **Next P2:** Split the ECharts vendor chunk further or raise its warning threshold intentionally after reviewing bundle policy.
+
+---
+
+## 2026-05-12 Backtest Parameter Parity and Bundle Split Pass
+
+### Issues Found
+
+- **P1 - Backtest launch UI did not expose backend-supported advanced params.** The API already accepted `output_csv`, `markets`, `slippage_multipliers`, and related options, but the page could not configure them.
+- **P1 - WFV UI did not expose backend-supported advanced params.** The API already accepted `run_id`, `folds_config`, `train_config`, and `robust_weights`, but the page could not configure them.
+- **P2 - Backtest/WFV command construction was not directly testable.** CLI argv construction lived inside background task closures.
+- **P2 - All top-level pages were statically imported into the main frontend bundle.** This produced a large initial route bundle and made every page pay for all other page modules up front.
+
+### Changes Applied
+
+- Added `_build_grid_cmd()` and `_build_wfv_cmd()` in `web/api/routers/backtest.py` and covered advanced argv construction in tests.
+- Added Backtest Launch controls for output CSV, multi-market list, explore-markets, slippage sensitivity, and slippage multipliers.
+- Added WFV controls for run ID, folds config, train config, and robust weights JSON.
+- Added i18n keys for the new Backtest/WFV controls in both English and Chinese.
+- Changed `web/frontend/src/App.tsx` to lazy-load top-level pages with `React.lazy` and `Suspense`, reducing the main JS chunk from about 1.19 MB to about 415 KB. ECharts is now isolated in its own async chunk; it still exceeds Vite's default 500 KB warning threshold.
+
+### Verification Completed
+
+```bash
+./.venv/bin/python -m pytest test/test_web_dashboard.py
+./.venv/bin/python -c "from web.api.app import app; print('OK', len(app.routes))"
+cd web/frontend && npm run build
+```
+
+Results:
+
+- `test/test_web_dashboard.py`: 9 passed.
+- FastAPI import: `OK 55`.
+- Frontend build: passed.
+- Bundle result: main `index` JS chunk dropped to about 415 KB; remaining warning is the isolated `EChartsWrapper` async chunk at about 656 KB.
+- CDP render smoke: `/backtest` rendered successfully; Launch tab showed `输出 CSV`, `滑点敏感性`, `多市场`, `网格并行数`; WFV tab showed `运行 ID`, `折叠配置`, `训练配置`, `稳健权重 JSON`; no `Not Found`, application error, or stale placeholder text.
+
+### Remaining Iteration Plan
+
+- **Next P1:** Add UI-side validation and error messaging for JSON fields and comma-separated numeric lists before starting long tasks.
+- **Next P2:** Add a committed browser test runner for tab switching and form submission smoke tests.
+- **Next P2:** Decide whether to split ECharts by chart-heavy routes or accept the isolated async vendor chunk with an adjusted warning threshold.
+
+---
+
 ## Phase 1: Foundation + Data Explorer
 
 ### Task 1: Install ECharts and remove Recharts

@@ -14,8 +14,9 @@ if _project_root not in sys.path:
 if _project_parent not in sys.path:
     sys.path.insert(0, _project_parent)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -55,7 +56,25 @@ def create_app() -> FastAPI:
 
     static_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
     if static_dir.is_dir():
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        assets_dir = static_dir / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+        index_file = static_dir / "index.html"
+
+        @app.get("/", include_in_schema=False)
+        async def serve_spa_index():
+            return FileResponse(index_file)
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def serve_spa_or_static(full_path: str):
+            if full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="Not Found")
+
+            candidate = (static_dir / full_path).resolve()
+            if candidate.is_file() and candidate.is_relative_to(static_dir.resolve()):
+                return FileResponse(candidate)
+            return FileResponse(index_file)
 
     return app
 

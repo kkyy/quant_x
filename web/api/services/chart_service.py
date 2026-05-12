@@ -28,9 +28,13 @@ def parse_equity_curve(filename: str) -> Dict:
     returns = df["return"].fillna(0)
     portfolio = (1 + returns).cumprod().tolist()
 
-    # Benchmark
-    if "benchmark_return" in df.columns:
-        bench_returns = df["benchmark_return"].fillna(0)
+    # Benchmark daily returns. qlib report CSVs usually name this column "bench".
+    bench_col = next(
+        (col for col in ("benchmark_return", "bench", "benchmark") if col in df.columns),
+        None,
+    )
+    if bench_col is not None:
+        bench_returns = df[bench_col].fillna(0)
         benchmark = (1 + bench_returns).cumprod().tolist()
     else:
         benchmark = [1.0] * len(dates)
@@ -48,7 +52,8 @@ def parse_equity_curve(filename: str) -> Dict:
 _METRIC_COLUMNS = {
     "annual_return", "sharpe", "max_drawdown", "calmar", "ic", "icir",
     "rank_ic", "rank_icir", "win_rate", "turnover", "cum_return",
-    "annual_vol", "sortino",
+    "annual_vol", "sortino", "information_ratio", "ir", "alpha",
+    "excess_return", "excess_annual_return",
 }
 
 

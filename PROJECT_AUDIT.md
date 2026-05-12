@@ -1,7 +1,7 @@
 # quant_ex 项目审计报告（复核更新版）
 
-> 复核时间：2026-05-07
-> 复核基线：当前工作区 HEAD + 2026-04-30 旧版审计报告
+> 复核时间：2026-05-11
+> 复核基线：当前工作区 HEAD + 2026-05-07 复核报告 + 本轮审计迭代
 > 复核范围：`models/`、`features/`、`data/`、`backtest/`、`signals/`、`run_*.py`、`config/`、`test/`、`web/`
 
 ---
@@ -26,6 +26,8 @@
 - **外部数据抓取层完成**：15 个领域 fetcher + 可配置缓存 TTL，覆盖基本面/资金面/情绪面全维度。
 - **调仓信号真实性大幅提升**：真实持仓 P&L 替换了无意义的回测收益，个股持股天数可见，逐股 hold 保护更精确。
 - **Overlay 回撤监控已落地**：弱市自动预警 + SVS 回撤门控，从"有概念"变成"有机制"。
+- **Benchmark 主链路已接通**：`BacktestEngine` 现在向 qlib 传入 `market.benchmark`，`compute_metrics()` 自动读取报告 `bench` 列，网格搜索默认按 `information_ratio` 排序。
+- **回测成交价已配置化**：`backtest.deal_price` 可在配置中切换 `close` / `open` 等 qlib 支持字段，默认保持历史 `close` 口径。
 - 旧报告中若干高优先级问题已修复或降级。
 
 本次复核后，问题重新分成三类：
@@ -58,40 +60,26 @@
 | CAP-09 | 部分完成 | `compute_rolling_ic()` 已有，自动告警、持久化、阈值治理未接通。|
 | GAP-04 | 部分缓解 | WFV 汇总含 t-test p-value，但折叠数量偏少。|
 | GAP-08 | 部分缓解 | `size_neutralize` 已有，未默认启用。|
-| **BUG-A06** | **已修复** | `run_scheduled_rebalance.py` 的 `_load_stock_names()` 仍为本地实现，但调仓报告已使用真实 P&L 替换回测收益（BUG-11），实际影响已消除。统一到 `data.utils` 仍为待清理项但优先级降低。 |
+| **BUG-A01** | **已修复** | benchmark 已从配置传入 qlib 回测报告，指标与排序默认使用 IR。 |
+| **BUG-A06** | **已修复** | `run_scheduled_rebalance.py` 已改用 `data.utils.load_stock_names()`。 |
+| **OPT-A07** | **已关闭** | `scripts/install_daily_rebalance_launchd.sh` 已按脚本位置动态解析项目路径，未发现旧路径 plist 模板。 |
 
 ---
 
 ## 3. 当前仍然成立的缺陷与风险
 
-### BUG-A01 🔴 基准超额收益链路只做了一半，回测主链仍未真正接入 benchmark
-
-**位置：** `backtest/metrics.py`、`backtest/engine.py`
-
-**现状：**
-
-- `backtest/metrics.py` 已支持 `benchmark_rets`，可计算 `excess_annual_return`、`information_ratio` 等。
-- 但 `backtest/engine.py` 仍调用 `backtest_daily(..., benchmark=None, ...)`。
-
-**影响：** 研究输出仍可能主要依赖绝对 Sharpe，牛市环境下参数优选仍可能高估策略质量。
-
-**建议：**
-1. `BacktestEngine.run()` 传入正确 benchmark。
-2. 回测报告和候选策略汇总强制同时展示绝对 Sharpe 与 IR。
-3. 候选策略排名依据切换为包含超额指标的组合口径。
-
----
-
-### BUG-A02 🔴 回测成交假设仍然偏理想化，默认 `deal_price="close"`
+### BUG-A02 🟡 回测成交假设已可配置，但默认仍保持 `deal_price="close"`
 
 **位置：** `backtest/engine.py`
 
-**影响：** 回测与实盘调仓时间错位，中小盘策略的真实成交偏差被低估。
+**现状：** `backtest.deal_price` 已接入 `SimulatorExecutor`，可切换到 `open` 等 qlib 支持字段；为了兼容历史结果，默认值仍是 `close`。
+
+**影响：** 如果研究仍沿用默认 `close`，回测与次日调仓执行之间仍存在乐观偏差。
 
 **建议：**
-1. 提供 `deal_price` 可配置项，至少支持 `open` / `close`。
-2. 默认研究口径切换到"次日开盘成交"或明确区分口径。
-3. 将开盘滑点和量能约束纳入标准评估模板。
+1. 为正式候选统一增加 `deal_price: "open"` 对照复跑。
+2. 将开盘滑点和量能约束纳入标准评估模板。
+3. 在策略日志中记录成交价口径，避免 close/open 结果混用。
 
 ---
 
@@ -126,14 +114,6 @@
 
 ---
 
-### BUG-A06 ⚠️ `run_scheduled_rebalance.py` 仍保留本地 `_load_stock_names()`
-
-**位置：** `run_scheduled_rebalance.py`
-
-**现状：** 实际影响已消除（BUG-11 已用真实 P&L 替换），统一到 `data.utils` 仍为代码清理项。
-
----
-
 ### BUG-A07 ⚠️ 回测侧缺少真正的持仓约束执行
 
 **位置：** `backtest/engine.py`
@@ -146,9 +126,9 @@
 
 ## 4. 优化机会（按收益/成本排序）
 
-### OPT-A01 高收益低成本：把超额收益口径接到所有主报表和候选策略排序
+### OPT-A01 已完成：把超额收益口径接到所有主报表和候选策略排序
 
-指标能力已在 `backtest/metrics.py` 实现，剩余主要是链路贯通和报表口径统一。
+已完成链路贯通：qlib report `bench` → `compute_metrics()` → grid CSV → `information_ratio` 默认排序。
 
 ---
 
@@ -158,9 +138,9 @@
 
 ---
 
-### OPT-A03 低收益低成本：继续完成数据工具去重
+### OPT-A03 已完成：继续完成数据工具去重
 
-重点：`run_scheduled_rebalance.py` 的 `_load_stock_names()`。
+`run_scheduled_rebalance.py` 已改用共享 `data.utils.load_stock_names()`。
 
 ---
 
@@ -170,21 +150,15 @@
 
 ---
 
-### OPT-A05 中收益中成本：`SectorDataProvider` akshare 抓取改为并发
+### OPT-A05 已完成：`SectorDataProvider` akshare 抓取改为并发
 
-`fundamental_factor.py` 已用线程池，行业数据层适合做同类改造。
+`SectorDataProvider._fetch_akshare()` 已使用 `ThreadPoolExecutor(max_workers=8)` 并发抓取。
 
 ---
 
 ### OPT-A06 中收益中成本：补齐"失败可观测性"
 
 最典型的是 `factor_mining.py`，"静默跳过"比报错更危险。
-
----
-
-### OPT-A07 低成本：launchd plist 路径修正
-
-3 个 plist 文件路径仍指向旧目录 `/Users/weidian/code/quant_ex`，需更新为当前项目路径。`install_daily_rebalance_launchd.sh` 的 `ROOT_DIR` 同理。
 
 ---
 
@@ -211,12 +185,10 @@
 - **真实持仓 P&L**：用实际价格变化计算每日盈亏，替换无意义的回测收益
 - **个股持股天数**：`--positions` 支持逐股建仓日期，报告显示持有天数
 - **逐股 hold 保护**：不同建仓日期独立计算保护期
+- **Benchmark 超额收益主链路**：回测报告默认带 `bench`，指标输出 IR/alpha/tracking error，网格搜索默认按 IR 排序
+- **回测成交价配置**：`backtest.deal_price` 可控制 qlib 成交价字段
 
 ### 5.2 部分具备
-
-#### CAP-B01 基准超额收益体系
-
-指标函数已支持，主回测链路未完全接通，研究排名口径未强制切换。
 
 #### CAP-B02 基本面因子库
 
@@ -260,9 +232,9 @@
 
 ## 6. 与量化盈利目标的主要差距
 
-### GAP-A01 🔴 研究结果仍可能高估真实 Alpha
+### GAP-A01 🟡 研究结果仍可能高估真实 Alpha
 
-根因是三项叠加：benchmark 链路未完全接通、`deal_price="close"` 偏理想化、历史行业/ST 数据使用当前快照。
+benchmark 链路已接通；剩余主要风险是默认 `deal_price="close"` 偏理想化，以及历史行业/ST 数据仍使用当前快照。
 
 ### GAP-A02 🔴 回测风险约束与实盘约束仍未统一
 
@@ -284,14 +256,12 @@ Alpha 主体仍偏价格/成交量，跨年份稳定性不够。
 
 ## 7. 建议的下一轮工作顺序
 
-1. 打通 benchmark 主链路，把超额收益指标变成默认口径。
-2. 把回测成交口径从固定收盘价扩展为可配置，并建立实盘口径模板。
-3. 为行业归属、ST 状态、证券状态补历史快照，先消除前视偏差。
-4. 将仓位硬约束下沉到回测执行层，重跑候选策略。
-5. 修正 launchd plist 路径，确保定时调仓可正常运行。
-6. 清理最后一批数据工具重复实现，降低维护分叉。
-7. 把 IC 衰减真正接入标签设计和持有期选择。
-8. 在已有估值因子基础上扩展质量/成长类基本面因子。
+1. 用 `deal_price: "open"` + 滑点敏感性复跑当前候选，建立实盘口径模板。
+2. 为行业归属、ST 状态、证券状态补历史快照，先消除前视偏差。
+3. 将仓位硬约束下沉到回测执行层，重跑候选策略。
+4. 把 IC 衰减真正接入标签设计和持有期选择。
+5. 在已有估值因子基础上扩展质量/成长类基本面因子。
+6. 将失败可观测性纳入标准研究报告：因子失败率、缺失率、fallback 次数、缓存命中率。
 
 ---
 
@@ -302,7 +272,7 @@ Alpha 主体仍偏价格/成交量，跨年份稳定性不够。
 本次复核最重要的更新：
 
 - Web Dashboard、数据抓取层、调仓信号真实性、Overlay 监控已全面落地，可观测性和可控性大幅提升。
-- 最高优先级仍是 benchmark、执行口径、历史快照和风险约束四条关键链路。
-- 一旦这四项补齐，后续做基本面扩展、标签体系升级、自动重训与退化告警，收益会更大也更可信。
+- benchmark 已从缺口变成默认研究口径；最高优先级转为执行口径、历史快照和风险约束三条关键链路。
+- 一旦这三项补齐，后续做基本面扩展、标签体系升级、自动重训与退化告警，收益会更大也更可信。
 
 *本报告为复核更新版，目的是反映当前代码状态。后续如再修复 benchmark、执行口径或历史快照问题，建议继续更新本文件。*

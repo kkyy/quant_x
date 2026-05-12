@@ -26,6 +26,13 @@ research:
   scoring:
     robust_score: "mean_sharpe - 0.5 * sharpe_std + 0.2 * min_sharpe + 0.05 * positive_sharpe_folds"
     note: "Treat candidates as research starting points, not proof of live profitability."
+  rejected_recent:
+    fundamental_gate_top70:
+      date: "2026-05-12"
+      config: "config/ablation_fundamental_gate.yaml"
+      result_source: "optimization_results/walk_forward_fundamental_gate_top70_wf/walk_forward_summary.csv"
+      reason: "Same-model 2024-2026 uplift failed WFV: mean Sharpe 0.30, min Sharpe -1.20, worst MaxDD -45.5%, only 4/7 positive folds, p=0.515."
+      revisit_only_if: "Use a much weaker drop-bottom gate or redo after a longer point-in-time fundamental audit; do not promote top70 gate."
 
 selected:
   # Highest robust_score in the completed walk-forward grid. Strong return,
@@ -39,7 +46,9 @@ selected:
   # Preferred next overlay iteration: still materially stronger than baseline,
   # but less concentrated than the topk=5 aggressive overlay.
   preferred_overlay_candidate: "csi1000_overlay_plus"
-
+  # Best WFV stability candidate: lower mean Sharpe than adaptive baseline,
+  # but all folds positive and materially lower worst drawdown.
+  stability_candidate: "csi1000_adaptive_dd20"
 candidates:
   csi800_aggressive_return:
     description: "Highest robust_score and highest mean return; needs position concentration controls before manual trading."
@@ -93,6 +102,54 @@ candidates:
       - "Use as the first practical low-frequency manual-selection candidate."
       - "Compare with csi800_stable_all_positive under equal position cap."
       - "Optional overlay: enable signal.postprocess.stock_vs_sector_filter for relative-strength narrowing, but treat it as aggressive."
+
+  csi1000_adaptive_dd20:
+    description: "Drawdown-gated SVS overlay with -20% threshold; first WFV candidate with all seven folds positive."
+    train_universe: "csi1000"
+    eval_market: "csi300"
+    base_model: "models/lgbm_universe-csi1000_20260428_155547.pkl"
+    config: "config/csi1000_adaptive_overlay_20.yaml"
+    signal_postprocess:
+      daily_transform: "rank"
+      stock_vs_sector_filter:
+        enabled: true
+        window: 20
+        keep_top_pct: 0.5
+        mode: "hard_filter"
+        drawdown_threshold: -0.20
+        drawdown_window: 120
+    strategy:
+      topk: 15
+      n_drop: 3
+      hold_thresh: 8
+    portfolio:
+      max_position_pct: 0.12
+      concentration_hard_limit: 0.22
+    walk_forward:
+      source_run: "optimization_results/walk_forward_adaptive_dd20_wf"
+      folds: 7
+      mean_annual_return: 0.2056
+      median_annual_return: 0.2442
+      mean_sharpe: 0.984371
+      median_sharpe: 0.9538
+      min_sharpe: 0.0217
+      sharpe_std: 0.809851
+      worst_max_drawdown: -0.2347
+      positive_return_folds: 7
+      positive_sharpe_folds: 7
+      mean_rank_ic: 0.048114
+      mean_rank_icir: 0.332843
+      sharpe_ttest_pvalue: 0.024721
+      robust_score: 0.933786
+      pareto_front: true
+    rationale:
+      - "Sacrifices mean Sharpe versus adaptive_baseline_wf (0.98 vs 1.22) for all-positive fold stability."
+      - "Improves worst drawdown versus adaptive_baseline_wf (-23.5% vs -28.6%)."
+      - "Keeps SVS as a drawdown-gated risk overlay rather than an always-on alpha assumption."
+    suggested_next_checks:
+      - "Run dry-run scheduled rebalance before any real notification or trading workflow."
+      - "Compare current holdings impact against adaptive_baseline_wf after the next qlib data update."
+      - "Keep csi1000_balanced/adaptive_baseline_wf as the return-seeking control."
 
   csi1000_relative_strength_overlay:
     description: "Aggressive overlay on csi1000_balanced: keep stocks in the top 40% by 20-day stock-vs-sector relative strength, then use a concentrated TopkDropout portfolio."

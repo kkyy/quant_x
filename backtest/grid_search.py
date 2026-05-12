@@ -113,6 +113,8 @@ class GridSearchBacktest:
         self.engine = engine
         self.pred = pred
         self.config = config
+        bt_cfg = config.get("backtest", {})
+        self.rank_metric = bt_cfg.get("rank_metric", "information_ratio")
 
     # ── public ────────────────────────────────────────────────────────────────
 
@@ -137,16 +139,17 @@ class GridSearchBacktest:
                     Ignored when multi_seed=True (seeds are already subprocesses).
 
         Returns:
-            DataFrame sorted by sharpe descending.
+            DataFrame sorted by configured ranking metric descending.
         """
         grid = param_grid or self.DEFAULT_GRID
         keys = list(grid.keys())
         combos = list(product(*[grid[k] for k in keys]))
         seeds = self.MULTI_SEEDS if multi_seed else [42]
-        logger.info(
-            f"Grid search: {len(combos)} combinations"
-            + (f" × {len(seeds)} seeds" if multi_seed else "")
-        )
+        message = f"Grid search: {len(combos)} combinations"
+        if multi_seed:
+            message += f" × {len(seeds)} seeds"
+        message += f" (rank_metric={self.rank_metric})"
+        logger.info(message)
 
         # ── parallel single-seed path ──────────────────────────────────────
         if not multi_seed and n_jobs != 1 and len(combos) > 1:
@@ -196,13 +199,15 @@ class GridSearchBacktest:
                 f"    Sharpe={m.get('sharpe', 0):.3f}"
                 + (f"±{m.get('sharpe_std', 0):.3f}" if multi_seed else "")
                 + f"  Ret={m.get('annual_return', 0):.2%}"
+                + (
+                    f"  IR={m.get('information_ratio', 0):.3f}"
+                    if "information_ratio" in m else ""
+                )
                 + f"  DD={m.get('max_drawdown', 0):.2%}"
             )
 
         df = pd.DataFrame(rows)
-        if "sharpe" in df.columns:
-            df = df.sort_values("sharpe", ascending=False).reset_index(drop=True)
-        return df
+        return self._sort_results(df)
 
     def _run_parallel(
         self,
@@ -251,7 +256,11 @@ class GridSearchBacktest:
                         f"  [{done}/{len(combos)}] {params}"
                         f"  Sharpe={metrics.get('sharpe', 0):.3f}"
                         f"  Ret={metrics.get('annual_return', 0):.2%}"
-                        f"  DD={metrics.get('max_drawdown', 0):.2%}"
+                        + (
+                            f"  IR={metrics.get('information_ratio', 0):.3f}"
+                            if "information_ratio" in metrics else ""
+                        )
+                        + f"  DD={metrics.get('max_drawdown', 0):.2%}"
                     )
                 combo_results[combo] = (params, metrics)
 
@@ -264,9 +273,7 @@ class GridSearchBacktest:
                 rows.append({**params, **metrics})
 
         df = pd.DataFrame(rows)
-        if "sharpe" in df.columns:
-            df = df.sort_values("sharpe", ascending=False).reset_index(drop=True)
-        return df
+        return self._sort_results(df)
 
     # ── private ───────────────────────────────────────────────────────────────
 
@@ -314,3 +321,17 @@ class GridSearchBacktest:
             "n_drop":      int(row.get("n_drop", 3)),
             "hold_thresh": int(row.get("hold_thresh", 5)),
         }
+
+    def _sort_results(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Sort by configured research ranking metric, falling back to Sharpe."""
+        if df.empty:
+            return df
+        rank_metric = self.rank_metric if self.rank_metric in df.columns else "sharpe"
+        if rank_metric not in df.columns:
+            return df
+        sort_cols = [rank_metric]
+        ascending = [False]
+        if "sharpe_std" in df.columns:
+            sort_cols.append("sharpe_std")
+            ascending.append(True)
+        return df.sort_values(sort_cols, ascending=ascending).reset_index(drop=True)

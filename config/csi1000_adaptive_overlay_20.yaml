@@ -1,5 +1,7 @@
 # Adaptive drawdown-gated SVS overlay with -20% threshold.
-# See config/csi1000_adaptive_overlay.yaml for full design rationale.
+# WFV 2026-05-05 robust winner: topk=15 / n_drop=3 / hold=8,
+# 7/7 positive Sharpe folds, mean Sharpe 0.984, worst MaxDD -23.47%.
+# See optimization_results/walk_forward_adaptive_dd20_wf/ for evidence.
 
 market:
   name: "csi300"
@@ -7,8 +9,8 @@ market:
 
 strategy:
   topk_dropout:
-    topk: 10
-    n_drop: 5
+    topk: 15
+    n_drop: 3
     hold_thresh: 8
   portfolio:
     max_position_pct: 0.12
@@ -36,10 +38,11 @@ signal:
 
 daily_rebalance:
   market: "csi300"
-  topk: 10
-  n_drop: 5
+  topk: 15
+  n_drop: 3
   hold_thresh: 8
   account: 150000
   notify_channel: "bark"
   start_date: "previous_trade_date"
   model_path: "models/lgbm_universe-csi1000_20260428_155547.pkl"
+  min_action_value: 1000

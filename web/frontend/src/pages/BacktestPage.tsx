@@ -74,6 +74,37 @@ const CHART_DATA_ZOOM = [
   },
 ];
 
+const parseIntList = (value: string) =>
+  value
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => !isNaN(n));
+
+const parseFloatList = (value: string) =>
+  value
+    .split(",")
+    .map((s) => parseFloat(s.trim()))
+    .filter((n) => !isNaN(n));
+
+const parseStringList = (value: string) =>
+  value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+const parseJsonObject = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 // ─── Launch Tab ────────────────────────────────────────────────────────
 
 function LaunchTab() {
@@ -90,6 +121,11 @@ function LaunchTab() {
   const [optimize, setOptimize] = useState(false);
   const [nIters, setNIters] = useState(3);
   const [gridWorkers, setGridWorkers] = useState(1);
+  const [outputCsv, setOutputCsv] = useState("");
+  const [markets, setMarkets] = useState("");
+  const [exploreMarkets, setExploreMarkets] = useState(false);
+  const [slippageSensitivity, setSlippageSensitivity] = useState(false);
+  const [slippageMultipliers, setSlippageMultipliers] = useState("0,0.25,0.5,1,1.5,2,3,5");
   const [taskId, setTaskId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -100,20 +136,11 @@ function LaunchTab() {
   }, []);
 
   const handleSubmit = async () => {
-    const res = await post<{ task_id: string }>("/backtest/grid", {
+    const body: Record<string, unknown> = {
       model_path: modelPath,
-      topk: topk
-        .split(",")
-        .map((s) => parseInt(s.trim()))
-        .filter((n) => !isNaN(n)),
-      n_drop: nDrop
-        .split(",")
-        .map((s) => parseInt(s.trim()))
-        .filter((n) => !isNaN(n)),
-      hold_thresh: holdThresh
-        .split(",")
-        .map((s) => parseInt(s.trim()))
-        .filter((n) => !isNaN(n)),
+      topk: parseIntList(topk),
+      n_drop: parseIntList(nDrop),
+      hold_thresh: parseIntList(holdThresh),
       start: startDate || null,
       end: endDate || null,
       market,
@@ -121,7 +148,15 @@ function LaunchTab() {
       optimize,
       n_iters: optimize ? nIters : undefined,
       grid_workers: gridWorkers > 1 ? gridWorkers : undefined,
-    });
+      output_csv: outputCsv.trim() || undefined,
+      markets: parseStringList(markets).length ? parseStringList(markets) : undefined,
+      explore_markets: exploreMarkets || undefined,
+      slippage_sensitivity: slippageSensitivity || undefined,
+      slippage_multipliers: slippageSensitivity && parseFloatList(slippageMultipliers).length
+        ? parseFloatList(slippageMultipliers)
+        : undefined,
+    };
+    const res = await post<{ task_id: string }>("/backtest/grid", body);
     setTaskId(res.task_id);
   };
 
@@ -214,7 +249,7 @@ function LaunchTab() {
               <DatePicker value={endDate} onChange={setEndDate} />
             </div>
           </div>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-6">
             <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
               <input
                 type="checkbox"
@@ -233,9 +268,27 @@ function LaunchTab() {
               />
               AI Optimize
             </label>
+            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+              <input
+                type="checkbox"
+                checked={exploreMarkets}
+                onChange={(e) => setExploreMarkets(e.target.checked)}
+                className="accent-terminal-green"
+              />
+              {t("backtest.exploreMarkets")}
+            </label>
+            <label className="flex items-center gap-2 text-xs font-mono text-terminal-text cursor-pointer">
+              <input
+                type="checkbox"
+                checked={slippageSensitivity}
+                onChange={(e) => setSlippageSensitivity(e.target.checked)}
+                className="accent-terminal-green"
+              />
+              {t("backtest.slippageSensitivity")}
+            </label>
             {optimize && (
               <div className="flex items-center gap-2">
-                <p className="text-xs font-mono text-terminal-text-dim">N iters</p>
+                <p className="text-xs font-mono text-terminal-text-dim">{t("backtest.nIters")}</p>
                 <NumberInput
                   value={nIters}
                   onChange={(v) => setNIters(v ?? 3)}
@@ -245,14 +298,50 @@ function LaunchTab() {
               </div>
             )}
           </div>
-          <div className="flex items-center gap-3">
-            <p className="text-xs font-mono text-terminal-text-dim uppercase">Grid Workers</p>
-            <NumberInput
-              value={gridWorkers}
-              onChange={(v) => setGridWorkers(v ?? 1)}
-              min={1}
-              max={8}
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">{t("backtest.gridWorkers")}</p>
+              <NumberInput
+                value={gridWorkers}
+                onChange={(v) => setGridWorkers(v ?? 1)}
+                min={1}
+                max={8}
+              />
+            </div>
+            <div>
+              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">{t("backtest.markets")}</p>
+              <input
+                type="text"
+                value={markets}
+                onChange={(e) => setMarkets(e.target.value)}
+                className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+                placeholder="csi300,csi1000"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">{t("backtest.outputCsv")}</p>
+              <input
+                type="text"
+                value={outputCsv}
+                onChange={(e) => setOutputCsv(e.target.value)}
+                className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+                placeholder="backtest_results/my_run.csv"
+              />
+            </div>
+            {slippageSensitivity && (
+              <div>
+                <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">{t("backtest.slippageMultipliers")}</p>
+                <input
+                  type="text"
+                  value={slippageMultipliers}
+                  onChange={(e) => setSlippageMultipliers(e.target.value)}
+                  className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+                  placeholder="0,0.25,0.5,1,2"
+                />
+              </div>
+            )}
           </div>
           <button
             onClick={handleSubmit}
@@ -811,6 +900,10 @@ function WalkForwardTab() {
   const [workers, setWorkers] = useState(1);
   const [gridWorkers, setGridWorkers] = useState(1);
   const [seeds, setSeeds] = useState(false);
+  const [runId, setRunId] = useState("");
+  const [foldsConfig, setFoldsConfig] = useState("");
+  const [trainConfig, setTrainConfig] = useState("");
+  const [robustWeights, setRobustWeights] = useState("");
   const [taskId, setTaskId] = useState<string | null>(null);
 
   const marketOptions = [
@@ -821,25 +914,21 @@ function WalkForwardTab() {
   ];
 
   const handleSubmit = async () => {
-    const res = await post<{ task_id: string }>("/backtest/walk-forward", {
+    const body: Record<string, unknown> = {
       train_universes: trainUniverses.split(",").map((s) => s.trim()),
       eval_market: evalMarket,
-      topk: topk
-        .split(",")
-        .map((s) => parseInt(s.trim()))
-        .filter((n) => !isNaN(n)),
-      n_drop: nDrop
-        .split(",")
-        .map((s) => parseInt(s.trim()))
-        .filter((n) => !isNaN(n)),
-      hold_thresh: holdThresh
-        .split(",")
-        .map((s) => parseInt(s.trim()))
-        .filter((n) => !isNaN(n)),
+      topk: parseIntList(topk),
+      n_drop: parseIntList(nDrop),
+      hold_thresh: parseIntList(holdThresh),
       workers,
       grid_workers: gridWorkers > 1 ? gridWorkers : undefined,
       seeds: seeds || undefined,
-    });
+      run_id: runId.trim() || undefined,
+      folds_config: foldsConfig.trim() || undefined,
+      train_config: trainConfig.trim() || undefined,
+      robust_weights: parseJsonObject(robustWeights),
+    };
+    const res = await post<{ task_id: string }>("/backtest/walk-forward", body);
     setTaskId(res.task_id);
   };
 
@@ -918,7 +1007,7 @@ function WalkForwardTab() {
             </div>
             <div>
               <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
-                Grid Workers
+                {t("backtest.gridWorkers")}
               </p>
               <NumberInput
                 value={gridWorkers}
@@ -937,6 +1026,56 @@ function WalkForwardTab() {
             />
             {t("backtest.multiSeed")}
           </label>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+                {t("backtest.runId")}
+              </p>
+              <input
+                type="text"
+                value={runId}
+                onChange={(e) => setRunId(e.target.value)}
+                className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+                placeholder="wfv_csi1000_20260512"
+              />
+            </div>
+            <div>
+              <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+                {t("backtest.foldsConfig")}
+              </p>
+              <input
+                type="text"
+                value={foldsConfig}
+                onChange={(e) => setFoldsConfig(e.target.value)}
+                className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+                placeholder="config/walk_forward_folds.yaml"
+              />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("backtest.trainConfig")}
+            </p>
+            <input
+              type="text"
+              value={trainConfig}
+              onChange={(e) => setTrainConfig(e.target.value)}
+              className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+              placeholder="config/model.yaml"
+            />
+          </div>
+          <div>
+            <p className="text-xs font-mono text-terminal-text-dim uppercase mb-1">
+              {t("backtest.robustWeights")}
+            </p>
+            <textarea
+              value={robustWeights}
+              onChange={(e) => setRobustWeights(e.target.value)}
+              rows={3}
+              className="w-full px-3 py-2 bg-terminal-surface border border-terminal-border rounded-sm text-xs font-mono text-terminal-text placeholder:text-terminal-text-dim focus:outline-none focus:border-terminal-green hover:border-terminal-text-dim transition-colors"
+              placeholder='{"mean_sharpe":1.0,"sharpe_std":-0.3}'
+            />
+          </div>
           <button
             onClick={handleSubmit}
             className="px-3 py-1.5 text-xs font-mono border border-terminal-green text-terminal-green hover:bg-terminal-green-glow transition-colors rounded-sm"

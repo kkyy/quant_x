@@ -60,11 +60,14 @@ class BacktestEngine:
     def __init__(self, config: dict):
         self.config = config
         bt = config.get("backtest", {})
+        market = config.get("market", {})
         self._defaults = {
             "account":    bt.get("account", 1_000_000),
             "open_cost":  bt.get("open_cost", 0.0005),
             "close_cost": bt.get("close_cost", 0.0015),
             "min_cost":   bt.get("min_cost", 5),
+            "deal_price": bt.get("deal_price", "close"),
+            "benchmark":  bt.get("benchmark", market.get("benchmark", "SH000300")),
         }
 
     # ── public ────────────────────────────────────────────────────────────────
@@ -81,6 +84,8 @@ class BacktestEngine:
         open_cost: Optional[float] = None,
         close_cost: Optional[float] = None,
         min_cost: Optional[float] = None,
+        deal_price: Optional[str] = None,
+        benchmark: Optional[str] = None,
     ) -> Tuple[pd.DataFrame, Dict]:
         """
         Run a single backtest.
@@ -146,9 +151,14 @@ class BacktestEngine:
             time_per_step="day",
             generate_portfolio_metrics=True,
         )
+        effective_benchmark = (
+            benchmark if benchmark is not None else self._defaults["benchmark"]
+        )
         exchange_kwargs = {
             "freq": "day",
-            "deal_price": "close",
+            "deal_price": (
+                deal_price if deal_price is not None else self._defaults["deal_price"]
+            ),
             "open_cost": open_cost if open_cost is not None else self._defaults["open_cost"],
             "close_cost": close_cost if close_cost is not None else self._defaults["close_cost"],
             "min_cost": min_cost if min_cost is not None else self._defaults["min_cost"],
@@ -164,7 +174,7 @@ class BacktestEngine:
                 end_time=bt_end,
                 strategy=strategy,
                 account=acct,
-                benchmark=None,
+                benchmark=effective_benchmark,
                 executor=executor,
                 exchange_kwargs=exchange_kwargs,
             )

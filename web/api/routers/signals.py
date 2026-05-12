@@ -1,3 +1,4 @@
+import copy
 import logging
 import subprocess
 import sys
@@ -60,6 +61,7 @@ async def generate_signal(req: GenerateSignalRequest):
                 positions[sym] = float(qty)
 
         daily_main(
+            config_path=req.config,
             model_path=req.model_path,
             account=req.account,
             current_positions=positions if positions else None,
@@ -75,6 +77,35 @@ class RebalanceRequest(BaseModel):
     mock: bool = True
     dry_run: bool = True
     config: Optional[str] = None
+    positions: Optional[str] = None
+    position_date: Optional[str] = None
+    min_action_value: Optional[float] = None
+    skip_update: bool = True
+    force: bool = False
+    notify_channel: Optional[str] = None
+
+
+def _build_rebalance_cmd(req: RebalanceRequest) -> list[str]:
+    cmd = [sys.executable, str(PROJECT_ROOT / "run_scheduled_rebalance.py")]
+    if req.mock:
+        cmd.append("--mock")
+    if req.dry_run:
+        cmd.append("--dry-run")
+    if req.config:
+        cmd.extend(["--config", req.config])
+    if req.positions:
+        cmd.extend(["--positions", req.positions])
+    if req.position_date:
+        cmd.extend(["--position-date", req.position_date])
+    if req.min_action_value is not None:
+        cmd.extend(["--min-action-value", str(req.min_action_value)])
+    if req.skip_update:
+        cmd.append("--skip-update")
+    if req.force:
+        cmd.append("--force")
+    if req.notify_channel:
+        cmd.extend(["--notify-channel", req.notify_channel])
+    return cmd
 
 
 @router.post("/rebalance")
@@ -84,13 +115,7 @@ async def run_rebalance(req: RebalanceRequest):
     tm = get_task_manager()
 
     def _run():
-        cmd = [sys.executable, str(PROJECT_ROOT / "run_scheduled_rebalance.py")]
-        if req.mock:
-            cmd.append("--mock")
-        if req.dry_run:
-            cmd.append("--dry-run")
-        if req.config:
-            cmd.extend(["--config", req.config])
+        cmd = _build_rebalance_cmd(req)
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=600)
         if result.returncode != 0:
             raise RuntimeError(f"Rebalance failed (exit {result.returncode}): {result.stderr[-500:]}")
@@ -104,15 +129,74 @@ class NotifyTestRequest(BaseModel):
     title: str
     content: str
     channel: Optional[str] = None
+    dry_run: bool = True
+    confirm_send: bool = False
+
+
+_NOTIFY_CHANNELS = {"bark", "pushplus", "dingtalk", "serverchan", "wechat_mp", "all"}
+
+
+def _enabled_notify_channels(config: dict) -> list[str]:
+    notify_cfg = config.get("notify") or {
+        key: config.get(key, {})
+        for key in ("bark", "pushplus", "dingtalk", "serverchan", "wechat_mp")
+        if key in config
+    }
+    return [
+        name
+        for name, cfg in notify_cfg.items()
+        if isinstance(cfg, dict) and cfg.get("enabled", False)
+    ]
+
+
+def _notify_config_for_channel(config: dict, channel: Optional[str]) -> dict:
+    if not channel or channel == "all":
+        return config
+    if channel not in _NOTIFY_CHANNELS:
+        raise HTTPException(status_code=400, detail=f"Unknown notification channel: {channel}")
+
+    patched = copy.deepcopy(config)
+    notify_cfg = patched.get("notify")
+    if not notify_cfg:
+        notify_cfg = {
+            key: patched.get(key, {})
+            for key in ("bark", "pushplus", "dingtalk", "serverchan", "wechat_mp")
+            if key in patched
+        }
+        patched["notify"] = notify_cfg
+
+    for name, cfg in notify_cfg.items():
+        if isinstance(cfg, dict):
+            cfg["enabled"] = name == channel
+    return patched
 
 
 @router.post("/notify-test")
 async def send_notify_test(req: NotifyTestRequest):
+    config = get_config()
+    selected_channel = req.channel or "all"
+    if selected_channel not in _NOTIFY_CHANNELS:
+        raise HTTPException(status_code=400, detail=f"Unknown notification channel: {selected_channel}")
+
+    enabled_channels = _enabled_notify_channels(_notify_config_for_channel(config, selected_channel))
+    if req.dry_run:
+        return {
+            "success": True,
+            "dry_run": True,
+            "sent": False,
+            "channels": enabled_channels,
+        }
+    if not req.confirm_send:
+        raise HTTPException(
+            status_code=400,
+            detail="Real notification requires confirm_send=true.",
+        )
+
     try:
         from quant_ex.notify.pusher import NotificationPusher
-        pusher = NotificationPusher(get_config())
-        pusher.send(title=req.title, content=req.content)
-        return {"success": True}
+        pusher = NotificationPusher(_notify_config_for_channel(config, selected_channel))
+        results = pusher.send(title=req.title, content=req.content)
+        return {"success": all(results.values()) if results else False, "dry_run": False, "sent": True, "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -3,8 +3,10 @@ from __future__ import annotations
 import pandas as pd
 
 from quant_ex.run_scheduled_rebalance import (
+    _compute_portfolio_pnl,
     _convert_snapshot_to_actual_prices,
     _diff_positions,
+    _format_report,
     _next_trading_day,
     _previous_trading_day,
     _resolve_cfg_start_date,
@@ -130,3 +132,50 @@ def test_convert_snapshot_to_actual_prices_respects_max_pct(monkeypatch):
     # shares = int(20000 / 12.0 / 100) * 100 = 1600
     assert converted["SH600001"]["shares"] == 1600.0
     assert converted["SH600002"]["shares"] == 1600.0
+
+
+def test_portfolio_pnl_uses_default_entry_date(monkeypatch):
+    calendar = pd.to_datetime(["2026-04-30", "2026-05-07", "2026-05-08"]).tolist()
+    prices = {
+        ("SH600001", "2026-04-30"): 10.0,
+        ("SH600001", "2026-05-07"): 11.0,
+    }
+
+    def fake_close(instrument, trade_date):
+        if trade_date == "2026-05-08":
+            return 12.0
+        return prices.get((instrument, trade_date))
+
+    monkeypatch.setattr("quant_ex.run_scheduled_rebalance._load_actual_close", fake_close)
+
+    pnl = _compute_portfolio_pnl(
+        {"SH600001": {"shares": 100, "price": 12.0, "value": 1200.0}},
+        "2026-05-08",
+        calendar,
+        default_entry_date="2026-04-30",
+    )
+
+    assert pnl["cum_pnl"] == 200.0
+    assert pnl["daily_pnl"] == 100.0
+    assert pnl["per_stock"][0]["entry_date"] == "2026-04-30"
+
+
+def test_format_report_shows_model_target_when_only_shares_change():
+    cfg = {"market": "csi1000", "topk": 1, "n_drop": 1, "hold_thresh": 5, "start_date": "2026-04-30"}
+    target = {"SH600001": {"shares": 100, "price": 10.0, "value": 1000.0}}
+    model_target = {"SH600001": {"shares": 200, "price": 10.0, "value": 2000.0}}
+
+    report = _format_report(
+        trade_date="2026-05-08",
+        next_trade_date="2026-05-11",
+        latest_position_date="2026-05-08",
+        cfg=cfg,
+        target=target,
+        actions=[],
+        metrics={},
+        mock=False,
+        model_target=model_target,
+    )
+
+    assert "模型选股目标" in report
+    assert "200股" in report

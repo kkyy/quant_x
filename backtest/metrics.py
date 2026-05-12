@@ -75,6 +75,9 @@ def compute_metrics(
         "n_days":        n,
     }
 
+    if benchmark_rets is None and "bench" in report.columns:
+        benchmark_rets = report["bench"].copy()
+
     # ── Benchmark-relative metrics ─────────────────────────────────────────────
     if benchmark_rets is not None and not benchmark_rets.empty:
         bm = benchmark_rets.reindex(rets.index).fillna(0)

@@ -61,6 +61,10 @@ strategy:
 
 backtest:
   account: 1000000
+  # qlib SimulatorExecutor 成交价字段；close 保持历史口径，open 用于更贴近次日执行研究。
+  deal_price: "close"
+  # 网格搜索默认用相对基准的信息比率排序；无 benchmark 时自动退回 sharpe。
+  rank_metric: "information_ratio"
   open_cost: 0.0005
   close_cost: 0.0015
   min_cost: 5
