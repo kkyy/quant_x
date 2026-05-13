@@ -8,6 +8,7 @@
 # ----------------------------------------------------------
 pyqlib>=0.9.1            # qlib: data loading, backtest, MLflow recorder
 mlflow>=2.0.0            # experiment tracking (used by qlib)
+setuptools-scm>=8.0.0    # required when loading qlib from cloned source
 
 # ----------------------------------------------------------
 # Machine Learning

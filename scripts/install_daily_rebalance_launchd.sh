@@ -4,10 +4,14 @@
 set -euo pipefail
 
 PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PY="$PROJ/.venv/bin/python"
+DAILY_SCRIPT="$PROJ/command/daily/csi1000_balanced_overlay_0428.sh"
 TARGET_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$PROJ/logs"
 mkdir -p "$TARGET_DIR" "$LOG_DIR"
+
+if [[ ! -x "$DAILY_SCRIPT" ]]; then
+  chmod +x "$DAILY_SCRIPT"
+fi
 
 AGENTS=(
   "com.quant_ex.daily_rebalance:20:0"
@@ -41,10 +45,8 @@ for ENTRY in "${AGENTS[@]}"; do
 
   <key>ProgramArguments</key>
   <array>
-    <string>$PY</string>
-    <string>$PROJ/run_scheduled_rebalance.py</string>
-    <string>--config</string>
-    <string>$PROJ/config/csi1000_balanced_overlay.yaml</string>
+    <string>/bin/bash</string>
+    <string>$DAILY_SCRIPT</string>
     $EXTRA_ARGS
   </array>
 
@@ -81,7 +83,7 @@ done
 
 echo ""
 echo "Schedules:"
-echo "  com.quant_ex.daily_rebalance                20:00 generate/cache signal"
-echo "  com.quant_ex.daily_rebalance.open_reminder  09:00 send cached reminder"
-echo "  com.quant_ex.daily_rebalance.close_reminder 14:00 send cached reminder"
+echo "  com.quant_ex.daily_rebalance                20:00 run command/daily/csi1000_balanced_overlay_0428.sh"
+echo "  com.quant_ex.daily_rebalance.open_reminder  09:00 run cached open reminder"
+echo "  com.quant_ex.daily_rebalance.close_reminder 14:00 run cached close reminder"
 echo "Check status: launchctl print gui/$(id -u)/<label>"
