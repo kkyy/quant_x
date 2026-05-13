@@ -130,3 +130,42 @@ export interface TaskInfo {
   error?: string;
   result?: unknown;
 }
+
+// --- Agent Runs ---
+export interface AgentRunSummary {
+  run_id: string;
+  objective?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  generated_at?: string;
+  modified_at?: string;
+  has_plan?: boolean;
+  has_commands?: boolean;
+  has_feedback?: boolean;
+  has_execution_summary?: boolean;
+  has_approval_template?: boolean;
+  commands_count?: number;
+  results_count?: number;
+  feedback_candidates_count?: number;
+  artifacts?: Record<string, unknown> | string[];
+  [key: string]: unknown;
+}
+
+export interface AgentRunDetail extends AgentRunSummary {
+  plan_markdown?: string;
+  commands_markdown?: string;
+  execution_summary?: string;
+  feedback?: string;
+  approval_template?: string;
+  raw?: unknown;
+}
+
+export interface AgentRunCreateRequest {
+  objective: string;
+  run_id?: string;
+  use_llm: boolean;
+  propose_actions: boolean;
+  write_approval_template: boolean;
+  append_memory: boolean;
+}

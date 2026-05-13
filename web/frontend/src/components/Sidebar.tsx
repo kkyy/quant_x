@@ -10,6 +10,7 @@ import {
   LineChart,
   Radio,
   Brain,
+  Bot,
   Settings,
   Terminal,
 } from "lucide-react";
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { icon: Brain, key: "models", to: "/models" },
   { icon: LineChart, key: "backtest", to: "/backtest" },
   { icon: Radio, key: "signals", to: "/signals" },
+  { icon: Bot, key: "agentRuns", to: "/agents" },
   { icon: Settings, key: "config", to: "/config" },
   { icon: Terminal, key: "system", to: "/system" },
 ] as const;

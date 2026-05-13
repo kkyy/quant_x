@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from web.api.routers import system, data, models, backtest, signals, factors, config as config_router
+    from web.api.routers import system, data, models, backtest, signals, factors, agents, config as config_router
 
     app.include_router(system.router, prefix="/api/system", tags=["system"])
     app.include_router(data.router, prefix="/api/data", tags=["data"])
@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(backtest.router, prefix="/api/backtest", tags=["backtest"])
     app.include_router(signals.router, prefix="/api/signals", tags=["signals"])
     app.include_router(factors.router, prefix="/api/factors", tags=["factors"])
+    app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
     app.include_router(config_router.router, prefix="/api/config", tags=["config"])
 
     static_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"

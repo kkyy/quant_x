@@ -1,0 +1,88 @@
+# Example agent strategy iteration config.
+# Copy to config/agent_strategy_iteration.yaml for local use.
+# This example is safe to commit because it contains no real API key.
+# The real config file is ignored by git and may contain local endpoint strings.
+
+root: "."
+output_dir: "docs/strategy_log/agent_runs"
+memory_log_path: "docs/strategy_log/agent_memory.md"
+
+llm:
+  api_key: ""
+  base_url: "https://your-openai-compatible-endpoint.example"
+  chat_path: "/v1/chat/completions"
+  stream: true
+  timeout: 90
+  tiers:
+    quick:
+      model: "gpt-5.4-mini"
+      reasoning_effort: "low"
+      temperature: 0.1
+      max_tokens: 1200
+    deep:
+      model: "gpt-5.5"
+      reasoning_effort: "high"
+      temperature: 0.2
+      max_tokens: 2400
+
+roles:
+  - name: "data_factor_analyst"
+    mission: "Audit data coverage, factor redundancy, lag safety, and orthogonal evidence opportunities."
+    perspective: "Data-centric quant analyst influenced by RD-Agent style factor trace discipline."
+    model_tier: "quick"
+    required_outputs: ["findings", "hypotheses", "screening plan", "leakage risks"]
+  - name: "model_analyst"
+    mission: "Judge whether model changes are justified versus data, factor, or hyperparameter causes."
+    perspective: "Quant model reviewer focused on avoiding costly architecture churn without evidence."
+    model_tier: "quick"
+    required_outputs: ["diagnosis", "model hypotheses", "training risks"]
+  - name: "backtest_analyst"
+    mission: "Protect experimental comparability across benchmark, rank metric, deal price, cost, and time windows."
+    perspective: "Validation specialist who assumes apparent gains may be measurement artifacts."
+    model_tier: "quick"
+    required_outputs: ["comparability checks", "control arm", "validation ladder"]
+  - name: "execution_analyst"
+    mission: "Review implementation risk around turnover, concentration, liquidity, rebalance, and notification flows."
+    perspective: "Execution engineer who protects real-world operability."
+    model_tier: "quick"
+    required_outputs: ["execution constraints", "risk controls", "approval gates"]
+  - name: "bull_researcher"
+    mission: "Make the strongest case for the most promising strategy upgrade path."
+    perspective: "Debate role inspired by TradingAgents-ex bull researcher."
+    model_tier: "quick"
+    required_outputs: ["supporting case", "expected upside", "why now"]
+  - name: "bear_researcher"
+    mission: "Attack the proposal for overfit, leakage, redundancy, regime fragility, and operational traps."
+    perspective: "Debate role inspired by TradingAgents-ex bear researcher."
+    model_tier: "quick"
+    required_outputs: ["failure modes", "kill tests", "do-not-promote conditions"]
+  - name: "research_manager"
+    mission: "Turn analyst and debate output into a compact research rating and experiment brief."
+    perspective: "Research judge using explicit promotion criteria instead of vibes."
+    model_tier: "deep"
+    required_outputs: ["rating", "why", "preferred directions"]
+  - name: "experiment_designer"
+    mission: "Translate the research brief into a control arm and narrowly-scoped treatment arms."
+    perspective: "Experiment designer who enforces one-major-variable-per-arm."
+    model_tier: "quick"
+    required_outputs: ["control arm", "treatment arms", "commands", "success criteria"]
+  - name: "aggressive_risk_reviewer"
+    mission: "Argue why a bolder experiment is worth the research budget."
+    perspective: "High-upside risk reviewer from the aggressive side of the risk triangle."
+    model_tier: "quick"
+    required_outputs: ["upside justification", "acceptable risks", "expansion triggers"]
+  - name: "conservative_risk_reviewer"
+    mission: "Argue why the plan should be scaled back, delayed, or rejected."
+    perspective: "Capital-preserving risk reviewer from the conservative side of the risk triangle."
+    model_tier: "quick"
+    required_outputs: ["blockers", "downside scenarios", "approval blockers"]
+  - name: "neutral_risk_reviewer"
+    mission: "Find the smallest reliable validation path between ambition and caution."
+    perspective: "Balanced risk reviewer looking for cheaper and cleaner evidence."
+    model_tier: "quick"
+    required_outputs: ["compromise path", "phased validation", "decision conditions"]
+  - name: "research_portfolio_manager"
+    mission: "Make the final research-capital allocation decision and choose approved experiment arms."
+    perspective: "Portfolio manager for strategy research effort, not live trading capital."
+    model_tier: "deep"
+    required_outputs: ["decision", "approved arms", "blocked arms", "validation ladder"]
