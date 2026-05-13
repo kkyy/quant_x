@@ -86,6 +86,29 @@ Exit criteria:
 
 Phase 1 through Phase 5 have been implemented. The current agent layer can build offline plans, parse feedback CSVs, produce gated command proposals with `commands.json` / `commands.md`, write `approval_template.yaml`, execute only explicitly approved commands whose `command_id` and `command_sha256` match the current plan, summarize execution in `execution_summary.md`, detect backtest/WFV CSV candidates for Phase 3 feedback handoff, and expose run artifacts in the Web Dashboard. `--execute-safe` remains limited to local low-risk checks; training, backtest, WFV, data fetch/update, notifications, and trading-like commands require an approval file entry before execution. The dashboard currently supports browse/create/regenerate approval template only, not command execution.
 
+## Full-Cycle Validation
+
+Run `full_agent_train_backtest_20260513` validated the complete path from real LLM role discussion to training, backtest, and feedback:
+
+- Run bundle: `docs/strategy_log/agent_runs/full_agent_train_backtest_20260513/`
+- Role traces: 12 roles, all real LLM calls, with quick/deep model tiers recorded in `role_traces.json` / `role_traces.md`
+- Strict training config: `docs/strategy_log/agent_runs/full_agent_train_backtest_20260513/train_csi1000_eval_csi300.yaml`
+- Strict model: `models/lgbm_agent_full_iter_csi1000_20260513_20260513_210545.pkl`
+- Result CSV: `backtest_results/agent_runs/full_agent_train_backtest_20260513_csi1000_model_csi300_eval.csv`
+- Feedback: `docs/strategy_log/agent_runs/full_agent_train_backtest_20260513/feedback.md`
+
+Strict csi1000-trained result on csi300 evaluation:
+
+- Sharpe: `1.2490`
+- Information ratio: `0.5774`
+- Annual return: `27.45%`
+- Max drawdown: `-20.86%`
+- Rank IC: `0.0521`
+
+Compared with `backtest_results/ablation/fundamental_control_15_3_8_20260511.csv`, the strict candidate underperformed on Sharpe and IR. The feedback decision is `reject` with `refuted` hypothesis evaluation. This run proves the agent workflow is operational, but it is not a promoted strategy candidate and should not be escalated to WFV without a new hypothesis.
+
+Operational note: an earlier diagnostic command in the same run used `config/daily_csi1000.yaml`, whose current `market.name` resolves to `csi300`. That diagnostic result is recorded as superseded in `full_cycle_summary.md`; strict csi1000 research should use an explicit override and verify the model `_meta.json`.
+
 ## LLM Tier Configuration
 
 Agent role model assignment is configured in `config/agent_strategy_iteration.yaml`.

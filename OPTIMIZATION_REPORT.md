@@ -1,8 +1,55 @@
 # quant_ex 优化实施报告
 
-> 最新更新：2026-05-11（第四批更新）
+> 最新更新：2026-05-13（第五批更新）
 > 基础：PROJECT_AUDIT.md 审计报告
-> 状态：**审计高优先级主链路继续收敛（第一批 15 项 + 第二批 11 项 + 第三批 5 项 + 第四批 5 项）**
+> 状态：**审计高优先级主链路继续收敛（第一批 15 项 + 第二批 11 项 + 第三批 5 项 + 第四批 5 项 + 第五批 Agent 策略迭代层）**
+
+---
+
+## 最新补充：第五批 Agent 策略迭代层
+
+### AGENT-01 ✅ 多角色策略迭代工作流
+
+**修复/新增方式：** 新增 `agent/strategy_iteration/`，提供 RD-Agent 风格 hypothesis/experiment/feedback trace 与 TradingAgents-ex 风格多角色审议，但保持轻量，不直接复制两者的复杂框架。
+
+**能力：**
+- 离线 planner 与真实 LLM planner
+- quick/deep LLM tier 配置
+- prompt catalog、context pack、role trace、memory log
+- command proposal、risk tag、approval template、command hash gate
+- execution summary 与 feedback handoff
+- Web Dashboard `/api/agents` 与 Agent Runs 页面
+
+**变更文件：**
+- `agent/strategy_iteration/*`
+- `run_agent_strategy_iteration.py`
+- `config/agent_strategy_iteration.example.yaml`
+- `web/api/routers/agents.py`
+- `web/api/services/agent_service.py`
+- `web/frontend/src/pages/AgentRunsPage.tsx`
+- `test/test_agent_strategy_iteration.py`
+- `test/test_web_dashboard.py`
+
+### AGENT-02 ✅ 完整训练/回测/feedback 闭环验证
+
+**验证 run：** `docs/strategy_log/agent_runs/full_agent_train_backtest_20260513/`
+
+**严格主线：**
+- 训练股票池：`csi1000`
+- 评估股票池：`csi300`
+- 模型：`models/lgbm_agent_full_iter_csi1000_20260513_20260513_210545.pkl`
+- 参数：`topk=15 / n_drop=3 / hold_thresh=8`
+- 结果 CSV：`backtest_results/agent_runs/full_agent_train_backtest_20260513_csi1000_model_csi300_eval.csv`
+
+**结果：**
+- Sharpe: `1.2490`
+- IR: `0.5774`
+- MaxDD: `-20.86%`
+- RankIC: `0.0521`
+
+**结论：** 通路验证成功，但候选弱于 `fundamental_control_15_3_8_20260511`，feedback 为 `reject/refuted`。该结果不推广、不进入 durable candidate；下一步应回到 baseline control 或设计更小的正交 ablation。
+
+**注意：** `config/daily_csi1000.yaml` 当前 `market.name` 实际为 `csi300`，不能只凭文件名判断训练股票池。strict csi1000 训练必须显式设置 `market.name: "csi1000"` 并核对模型 `_meta.json`。
 
 ---
 
@@ -244,8 +291,8 @@ Top-50 特征重要性自动保存为 `models/{stem}_feature_importance.json`。
 
 本地 SPA 管理面板：React 19 + Vite + TypeScript + Tailwind CSS + react-i18next。
 
-- 后端：FastAPI，7 routers，33 API 端点，TaskManager + SSE 流式推送
-- 前端：8 页面（Dashboard / Data / Models / Backtest / Signals / Factors / Config / System）
+- 后端：FastAPI，8 routers，37 API 端点，TaskManager + SSE 流式推送
+- 前端：9 页面（Dashboard / Data / Models / Backtest / Signals / Factors / Config / Agent Runs / System）
 - 入口：`python web/run_web.py`（生产 :8000）或 `npm run dev`（开发 :5173）
 
 **变更文件：** `web/`（新建目录，~40 文件）

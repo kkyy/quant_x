@@ -8,11 +8,15 @@
 ## 主文件
 
 - `strategy_iteration_log.csv`：主表，按 `iteration_date` 升序维护。
+- `system_iteration_log.csv`：系统级迭代主表，记录全系统能力变化、基线范围、诊断评分和收敛状态。
+- `agent_memory.md`：多角色 agent 策略迭代的追加式 memory，用于保留计划摘要和 delayed feedback。
+- `agent_runs/`：agent run 的本地生成目录，包含 `run.json`、`plan.md`、`role_traces.*`、`commands.*`、`approval_template.yaml`、`feedback.*` 等。该目录默认 gitignored，不作为长期表格日志提交。
 
 ## 维护规则
 
 - 每新增一个长期保留的策略配置，或对某个候选做出明确迭代结论，都应追加一行。
 - 不记录一次性的临时调试参数；只记录“值得后续比较或复用”的策略版本。
+- Agent planning 本身不等于策略结论。只有当训练/回测/WFV 结果改变长期决策面时，才追加 `strategy_iteration_log.csv`；否则保留在 `agent_memory.md` 和 run-local summary。
 - `config_path` 填相对路径；如果该策略没有独立配置文件，可填 `-`，并在 `notes` 中说明。
 - `result_source` 填支撑该条记录的文件，如 `optimization_results/...csv`、`...md`、`config/strategy_candidates.yaml`。
 - `next_ablation` 只写下一步最重要的一条，不要堆太多待办。
@@ -32,3 +36,12 @@
 - 先读 `strategy_iteration_log.csv` 再决定跑哪些回测。
 - 做新策略时，优先和 `decision=compare_next` 或 `decision=keep` 的条目比较。
 - 若某条策略已经失效或被更优版本替代，不删除旧记录，只新增一条更新状态的记录。
+- 对 agent run，优先读 `feedback.md` 和 `full_cycle_summary.md`；再决定是否需要把结果提升到 CSV 主表。
+
+## 近期 Agent 结论
+
+- `full_agent_train_backtest_20260513` 已验证 agent→训练→回测→feedback 完整通路。
+- 严格主线为 csi1000 训练、csi300 评估、`topk=15/n_drop=3/hold_thresh=8`。
+- 回测结果为 Sharpe `1.2490`、IR `0.5774`、MaxDD `-20.86%`，弱于 `fundamental_control_15_3_8_20260511`。
+- Feedback decision 为 `reject/refuted`。该 run 是工作流验证，不是 durable strategy candidate，不应提升到 `strategy_iteration_log.csv`。
+- 同一 run 中较早的 `full_agent_train_backtest_20260513_same_model.csv` 使用了 `config/daily_csi1000.yaml`，而该文件当前 `market.name` 实际为 `csi300`；它是 superseded diagnostic，不作为主结论。

@@ -24,7 +24,8 @@
 - Bark / PushPlus / 钉钉 / Server 酱 / 微信模板消息通知
 - 东方财富行业与概念数据缓存
 - Claude API 辅助参数优化
-- Web Dashboard：本地可视化面板（数据管理、模型训练/浏览、回测、信号生成、因子分析、配置编辑），中英文切换
+- Agent 策略迭代：多角色 LLM/离线 planner、prompt/context/trace 记录、命令审批模板、回测/WFV feedback 回灌
+- Web Dashboard：本地可视化面板（数据管理、模型训练/浏览、回测、信号生成、因子分析、配置编辑、Agent Runs），中英文切换
 
 > 本项目仅用于研究和辅助决策，不构成投资建议。
 
@@ -38,6 +39,7 @@
 - [训练模型](#训练模型)
 - [回测与网格搜索](#回测与网格搜索)
 - [Walk-forward 验证](#walk-forward-验证)
+- [Agent 策略迭代](#agent-策略迭代)
 - [每日信号与调仓](#每日信号与调仓)
 - [定时任务](#定时任务)
 - [因子与信号处理](#因子与信号处理)
@@ -306,6 +308,68 @@ optimization_results/walk_forward_<run_id>/
 
 ---
 
+## Agent 策略迭代
+
+`agent/strategy_iteration/` 提供一个轻量的研究 agent 层，吸收 RD-Agent 的 hypothesis/experiment/feedback trace 和 TradingAgents-ex 的多角色审议机制，但不直接绕过现有训练、回测、WFV 和审批链路。
+
+核心产物：
+
+- `docs/strategy_log/agent_runs/{run_id}/run.json`：完整 run bundle
+- `plan.md`：多角色汇总计划
+- `role_traces.json` / `role_traces.md`：每个 role 的 prompt、模型、上游角色、原始响应和结构化报告
+- `commands.json` / `commands.md`：命令提案、风险标签和 command hash
+- `approval_template.yaml`：受保护命令的审批模板
+- `feedback.json` / `feedback.md`：回测或 WFV CSV 回灌后的结果评价
+- `docs/strategy_log/agent_memory.md`：跨 run 的追加式 agent memory
+
+离线计划（默认不调用模型）：
+
+```bash
+./.venv/bin/python run_agent_strategy_iteration.py \
+  --objective "比较 csi1000 baseline 与一个新的 postprocess ablation" \
+  --run-id local_agent_plan \
+  --no-llm \
+  --propose-actions \
+  --write-approval-template
+```
+
+真实 LLM 多角色计划：
+
+```bash
+./.venv/bin/python run_agent_strategy_iteration.py \
+  --objective "基于当前候选提出下一轮可审批的策略迭代" \
+  --run-id real_llm_agent_strategy_iteration \
+  --use-llm \
+  --propose-actions \
+  --write-approval-template
+```
+
+回测/WFV 结果回灌：
+
+```bash
+./.venv/bin/python run_agent_strategy_iteration.py \
+  --feedback-run-id real_llm_agent_strategy_iteration \
+  --result-csv backtest_results/agent_runs/result.csv \
+  --control-csv backtest_results/ablation/control.csv \
+  --result-kind backtest \
+  --rank-metric information_ratio
+```
+
+LLM 配置使用本地文件 `config/agent_strategy_iteration.yaml`，该文件被 gitignore 排除；提交样例为 `config/agent_strategy_iteration.example.yaml`。支持 quick/deep tier，例如 quick 使用轻量模型，deep 使用 reasoning 模型。不要把真实 API key 写入可提交文件。
+
+2026-05-13 完整闭环验证：
+
+- Run: `docs/strategy_log/agent_runs/full_agent_train_backtest_20260513/`
+- 严格主线：`csi1000` 训练、`csi300` 评估、`topk=15/n_drop=3/hold_thresh=8`
+- 结果：Sharpe `1.2490`，IR `0.5774`，MaxDD `-20.86%`
+- Control: `backtest_results/ablation/fundamental_control_15_3_8_20260511.csv`
+- Feedback decision: `reject / refuted`
+- 结论：完整 agent→训练→回测→feedback 通路已跑通，但该 strict csi1000 重训候选不应推广；下一步应回到现有 baseline control 或设计更小、更正交的 ablation。
+
+注意：`config/daily_csi1000.yaml` 是日常信号覆盖配置名，但当前文件中的 `market.name` 实际为 `csi300`，不要仅凭文件名判断训练股票池。需要 strict csi1000 训练时，应显式检查或创建 override，使 `market.name: "csi1000"`。
+
+---
+
 ## 每日信号与调仓
 
 ### 每日信号
@@ -558,11 +622,12 @@ npm run dev    # http://localhost:5173（自动代理 /api → :8000）
 | Signals | 信号生成、历史记录、调仓模拟、通知测试 |
 | Factors | 因子库（19 个注册因子）、因子评估、因子挖掘 |
 | Config | YAML 配置编辑器、策略候选、Regime 规则编辑 |
+| Agent Runs | 创建/浏览 agent run、查看计划/trace/commands/feedback、生成审批模板 |
 | System | 日志查看、缓存管理、运行时信息 |
 
 ### API
 
-共 33 个 API 端点，分为 7 组路由：
+共 37 个 API 端点，分为 8 组路由：
 
 - `/api/system/`：健康检查、运行时信息、日志、任务管理、SSE 流
 - `/api/data/`：缓存状态、数据获取、股票查询
@@ -571,6 +636,7 @@ npm run dev    # http://localhost:5173（自动代理 /api → :8000）
 - `/api/signals/`：信号生成、历史、regime、调仓、通知测试
 - `/api/factors/`：因子列表、库、评估、挖掘
 - `/api/config/`：YAML 读写、预设列表
+- `/api/agents/`：agent run 列表、详情、创建、审批模板生成
 
 ---
 
@@ -587,6 +653,7 @@ config/base.yaml → config/model.yaml → config/notify.yaml → --config 覆�
 - `config/base.yaml`：市场、benchmark、策略、回测成交口径、daily_rebalance、信号处理
 - `config/model.yaml`：模型参数、额外因子、ensemble
 - `config/notify.yaml`：通知渠道配置，建议从 `config/notify.yaml.example` 复制
+- `config/agent_strategy_iteration.yaml`：本地 agent LLM 配置，gitignored；提交样例为 `config/agent_strategy_iteration.example.yaml`
 - `config/strategy_candidates.yaml`：长期保留的研究结论，不会被自动加载
 - `docs/strategy_log/strategy_iteration_log.csv`：策略级迭代历史（配置路径、参数、指标、结论），后续策略比较与 ablation 决策的首选入口
 - `docs/strategy_log/system_iteration_log.csv`：系统级迭代历史（全系统变更、基线范围、前后最佳 Sharpe、诊断评分、收敛状态），通过 `strategy_iteration_ids` 与策略日志关联
@@ -673,18 +740,19 @@ quant_ex/
 │   ├── api/                       #   后端
 │   │   ├── app.py                 #     应用工厂 + CORS + 静态文件挂载 + sys.path 设置
 │   │   ├── deps.py                #     共享依赖（配置加载、路径常量）
-│   │   ├── routers/               #     7 个 API 路由（system/data/models/backtest/signals/factors/config）
+│   │   ├── routers/               #     8 个 API 路由（system/data/models/backtest/signals/factors/config/agents）
 │   │   └── services/              #     TaskManager（后台任务 + SSE）、日志捕获流
 │   ├── frontend/                  #   前端（Vite + TypeScript + Tailwind + react-i18next）
-│   │   ├── src/pages/             #     8 个页面组件
+│   │   ├── src/pages/             #     9 个页面组件（含 Agent Runs）
 │   │   ├── src/api/client.ts      #     Typed API 客户端
 │   │   ├── src/hooks/useSSE.ts    #     SSE 流式推送 hook
 │   │   ├── src/i18n/             #     国际化（en.json / zh.json）
 │   │   └── src/components/        #     Sidebar、Layout、LanguageToggle、共享组件
 │   └── run_web.py                 #   入口：uvicorn + 静态文件服务
 │
-├── agent/                         # AI 辅助
-│   └── auto_optimizer.py          #   Claude API 网格搜索参数优化
+├── agent/                         # AI 辅助与 agent 策略迭代
+│   ├── auto_optimizer.py          #   Claude API 网格搜索参数优化
+│   └── strategy_iteration/        #   多角色 agent planner、prompt、LLM client、feedback、approval gate
 │
 ├── scripts/                       # 运维脚本
 │   ├── install_daily_rebalance_launchd.sh  # 安装定时调仓（动态路径）
@@ -704,6 +772,7 @@ quant_ex/
 │
 ├── run_train.py                   # 模型训练入口
 ├── run_backtest.py                # 回测 + 网格搜索 + AI 优化入口
+├── run_agent_strategy_iteration.py # 多角色 agent 策略迭代入口
 ├── run_walk_forward_validation.py # Walk-forward 时间交叉验证入口
 ├── run_daily.py                   # 每日信号生成入口
 ├── run_scheduled_rebalance.py     # 收盘后调仓信号入口（P&L + 持股天数 + hold 保护）

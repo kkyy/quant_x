@@ -30,6 +30,38 @@ Research Brief
   -> Memory/Trace Update
 ```
 
+## 1.1 Implementation Status: 2026-05-13
+
+The proposed design has been implemented as a lightweight module rather than a direct import of RD-Agent or TradingAgents-ex.
+
+Implemented modules:
+
+- `agent/strategy_iteration/schemas.py`: role reports, plans, run bundles, command proposals, feedback objects
+- `agent/strategy_iteration/context.py`: local context pack from strategy/system logs, candidates, configs, artifacts, and memory
+- `agent/strategy_iteration/roles.py`: offline and LLM role execution with upstream role carry-over
+- `agent/strategy_iteration/llm.py`: OpenAI-compatible quick/deep tier client, including streaming responses
+- `agent/strategy_iteration/execution.py`: command proposals, risk tags, approval templates, command hash matching, execution summaries
+- `agent/strategy_iteration/evaluator.py`: backtest/WFV CSV feedback parsing
+- `run_agent_strategy_iteration.py`: CLI for planning, command proposal, approved execution, and feedback handoff
+- `/api/agents` and Web `Agent Runs` page: browse/create agent runs and regenerate approval templates
+
+Full-cycle validation:
+
+- Run id: `full_agent_train_backtest_20260513`
+- Path: `docs/strategy_log/agent_runs/full_agent_train_backtest_20260513/`
+- Real LLM roles: 12/12, with `gpt-5.4-mini` quick tier and `gpt-5.5` deep tier
+- Strict training config: `train_csi1000_eval_csi300.yaml`
+- Strict model: `models/lgbm_agent_full_iter_csi1000_20260513_20260513_210545.pkl`
+- Backtest result: Sharpe `1.2490`, IR `0.5774`, MaxDD `-20.86%`
+- Feedback decision: `reject/refuted` versus `fundamental_control_15_3_8_20260511`
+
+Interpretation:
+
+- The agent workflow is operational end-to-end: role discussion, trace, training, backtest CSV, feedback, and memory reflection.
+- The strict csi1000 retrain candidate itself is not a promotion candidate.
+- The correct next use of the framework is a smaller, control-matched ablation or a return to the existing baseline control.
+- `docs/strategy_log/agent_runs/` is local/generated and ignored by default; durable conclusions belong in `strategy_iteration_log.csv`, `system_iteration_log.csv`, `config/strategy_candidates.yaml`, and concise Markdown summaries.
+
 ## 2. RD-Agent Design Analysis
 
 ### 2.1 Core Philosophy
@@ -973,8 +1005,12 @@ Neutral:
 保存到：
 
 ```text
-docs/strategy_log/agent_runs/{run_id}/trace.json
-docs/strategy_log/agent_runs/{run_id}/report.md
+docs/strategy_log/agent_runs/{run_id}/run.json
+docs/strategy_log/agent_runs/{run_id}/plan.md
+docs/strategy_log/agent_runs/{run_id}/role_traces.json
+docs/strategy_log/agent_runs/{run_id}/role_traces.md
+docs/strategy_log/agent_runs/{run_id}/commands.json
+docs/strategy_log/agent_runs/{run_id}/feedback.md
 ```
 
 trace 结构：

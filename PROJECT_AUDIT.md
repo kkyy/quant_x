@@ -1,6 +1,7 @@
 # quant_ex 项目审计报告（复核更新版）
 
 > 复核时间：2026-05-11
+> 补充更新：2026-05-13，Agent 策略迭代层与完整训练/回测/feedback 闭环已落地
 > 复核基线：当前工作区 HEAD + 2026-05-07 复核报告 + 本轮审计迭代
 > 复核范围：`models/`、`features/`、`data/`、`backtest/`、`signals/`、`run_*.py`、`config/`、`test/`、`web/`
 
@@ -22,12 +23,14 @@
 
 与 2026-04-30 的旧版报告相比，本次复核的核心变化：
 
-- **Web Dashboard 全面上线**：8 页面 33 端点的本地 SPA 管理面板已落地，之前缺失的可视化能力大幅补齐。
+- **Web Dashboard 全面上线**：9 页面 37 端点的本地 SPA 管理面板已落地，之前缺失的可视化能力大幅补齐；新增 Agent Runs 页面。
+- **Agent 策略迭代层落地**：`agent/strategy_iteration/` 已支持多角色 LLM/离线计划、prompt/context/trace 记录、命令审批模板、execution summary、回测/WFV feedback 回灌和 append-only memory。
 - **外部数据抓取层完成**：15 个领域 fetcher + 可配置缓存 TTL，覆盖基本面/资金面/情绪面全维度。
 - **调仓信号真实性大幅提升**：真实持仓 P&L 替换了无意义的回测收益，个股持股天数可见，逐股 hold 保护更精确。
 - **Overlay 回撤监控已落地**：弱市自动预警 + SVS 回撤门控，从"有概念"变成"有机制"。
 - **Benchmark 主链路已接通**：`BacktestEngine` 现在向 qlib 传入 `market.benchmark`，`compute_metrics()` 自动读取报告 `bench` 列，网格搜索默认按 `information_ratio` 排序。
 - **回测成交价已配置化**：`backtest.deal_price` 可在配置中切换 `close` / `open` 等 qlib 支持字段，默认保持历史 `close` 口径。
+- **完整 agent 闭环已验证但未产生新候选**：`full_agent_train_backtest_20260513` 完成 real LLM agent → LGBM 训练 → csi300 回测 → feedback。strict csi1000 重训候选 Sharpe 1.2490、IR 0.5774，弱于现有同参数 control，结论为 reject/refuted。
 - 旧报告中若干高优先级问题已修复或降级。
 
 本次复核后，问题重新分成三类：

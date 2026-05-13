@@ -10,7 +10,9 @@ from quant_ex.run_scheduled_rebalance import (
     _diff_positions,
     _format_report,
     _load_executed_positions_from_cache,
+    _load_executed_state_from_cache,
     _next_trading_day,
+    _pnl_carry_after_actions,
     _positions_after_actions,
     _previous_trading_day,
     _resolve_cfg_start_date,
@@ -219,8 +221,44 @@ def test_load_executed_positions_from_legacy_cache_report(tmp_path, monkeypatch)
     assert positions["SH600115"]["shares"] == 6700.0
     assert positions["SH600115"]["price"] == 5.0
     assert positions["SH600115"]["value"] == 33500.0
+    # Cache roll-forward assumes close execution, so a position opened on the
+    # execution date starts at that day's close and does not earn intraday P&L.
+    assert positions["SH600115"]["cost_price"] == 5.0
     assert positions["SH600115"]["entry_date"] == "2026-05-13"
     assert positions["SZ000651"]["entry_date"] == "2026-05-13"
+
+
+def test_load_executed_state_carries_legacy_portfolio_pnl(tmp_path, monkeypatch):
+    payload = {
+        "trade_date": "2026-05-12",
+        "next_trade_date": "2026-05-13",
+        "created_at": "2026-05-12T20:00:00",
+        "strategy": {"market": "csi300"},
+        "report": "\n".join(
+            [
+                "量化调仓信号",
+                "累计收益 +2,885元 (+2.45%)  当日 +682元 (+0.57%)  总市值 120,543元",
+                "",
+                "目标持仓摘要:",
+                "SH600115 中国东航 [航空运输]: 6700股 约29,748元",
+            ]
+        ),
+    }
+    (tmp_path / "rebalance_2026-05-12.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("quant_ex.run_scheduled_rebalance._load_actual_close", lambda instrument, trade_date: 5.0)
+
+    state = _load_executed_state_from_cache(
+        {"cache_dir": str(tmp_path), "market": "csi300"},
+        "2026-05-13",
+    )
+
+    assert state is not None
+    assert state["pnl_carry"]["cum_pnl"] == 2885.0
+    assert state["pnl_carry"]["cum_return"] == 0.0245
+    assert state["pnl_carry"]["total_value"] == 120543.0
 
 
 def test_load_executed_positions_prefers_structured_executed_positions(tmp_path, monkeypatch):
@@ -257,6 +295,65 @@ def test_load_executed_positions_prefers_structured_executed_positions(tmp_path,
     }
 
 
+def test_close_execution_uses_previous_positions_for_execution_day_pnl(tmp_path, monkeypatch):
+    payload = {
+        "trade_date": "2026-05-13",
+        "next_trade_date": "2026-05-14",
+        "created_at": "2026-05-13T20:00:00",
+        "strategy": {"market": "csi300"},
+        "previous_positions": {
+            "SH600001": {
+                "shares": 1000,
+                "price": 10.0,
+                "value": 10000.0,
+                "entry_date": "2026-05-10",
+                "cost_price": 9.0,
+            }
+        },
+        "executed_positions": {
+            "SH600002": {
+                "shares": 1000,
+                "price": 20.0,
+                "value": 20000.0,
+                "entry_date": "2026-05-14",
+                "cost_price": 20.0,
+            }
+        },
+        "portfolio_pnl": {"pnl_carry": 100.0, "total_value": 10000.0},
+        "actions": [
+            {"action": "sell", "instrument": "SH600001", "shares": 1000, "price": 10.0, "value": 10000.0},
+            {"action": "buy", "instrument": "SH600002", "shares": 1000, "price": 20.0, "value": 20000.0},
+        ],
+    }
+    (tmp_path / "rebalance_2026-05-13.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    def fake_close(instrument, trade_date):
+        prices = {
+            ("SH600001", "2026-05-13"): 10.0,
+            ("SH600001", "2026-05-14"): 11.0,
+            ("SH600002", "2026-05-14"): 21.0,
+        }
+        return prices.get((instrument, trade_date), prices.get((instrument, "2026-05-14")))
+
+    monkeypatch.setattr("quant_ex.run_scheduled_rebalance._load_actual_close", fake_close)
+
+    state = _load_executed_state_from_cache(
+        {"cache_dir": str(tmp_path), "market": "csi300"},
+        "2026-05-14",
+        trading_calendar=pd.to_datetime(["2026-05-13", "2026-05-14"]).tolist(),
+    )
+
+    assert state is not None
+    assert state["positions"]["SH600002"]["price"] == 21.0
+    assert state["positions"]["SH600002"]["cost_price"] == 21.0
+    assert state["display_portfolio_pnl"]["cum_pnl"] == 2100.0
+    assert state["display_portfolio_pnl"]["daily_pnl"] == 1000.0
+    assert state["pnl_carry"]["cum_pnl"] == 2100.0
+
+
 def test_positions_after_actions_keeps_filtered_small_diffs_as_previous():
     previous = {
         "SH600001": {"shares": 100, "price": 10.0, "value": 1000.0, "entry_date": "2026-04-30"},
@@ -274,3 +371,49 @@ def test_positions_after_actions_keeps_filtered_small_diffs_as_previous():
     assert positions["SH600001"]["entry_date"] == "2026-04-30"
     assert positions["SH600003"]["shares"] == 100.0
     assert "SH600002" in positions
+
+
+def test_compute_portfolio_pnl_adds_carry_and_explicit_cost(monkeypatch):
+    calendar = pd.to_datetime(["2026-05-12", "2026-05-13"]).tolist()
+    monkeypatch.setattr("quant_ex.run_scheduled_rebalance._load_actual_close", lambda instrument, trade_date: 5.0)
+
+    pnl = _compute_portfolio_pnl(
+        {
+            "SH600115": {
+                "shares": 1000,
+                "price": 5.0,
+                "value": 5000.0,
+                "entry_date": "2026-05-13",
+                "cost_price": 4.5,
+            }
+        },
+        "2026-05-13",
+        calendar,
+        pnl_carry={"cum_pnl": 2885.0},
+    )
+
+    assert pnl["position_cum_pnl"] == 500.0
+    assert pnl["pnl_carry"] == 2885.0
+    assert pnl["cum_pnl"] == 3385.0
+    assert pnl["per_stock"][0]["days_held"] == 0
+
+
+def test_pnl_carry_after_actions_realizes_sold_position_pnl():
+    portfolio_pnl = {
+        "pnl_carry": 100.0,
+        "total_value": 10000.0,
+        "per_stock": [
+            {"instrument": "SH600001", "shares": 1000, "cum_pnl": 500.0},
+            {"instrument": "SH600002", "shares": 1000, "cum_pnl": -200.0},
+        ],
+    }
+
+    carry = _pnl_carry_after_actions(
+        portfolio_pnl,
+        [
+            RebalanceAction("sell", "SH600001", 1000, 10.0, 10000.0),
+            RebalanceAction("reduce", "SH600002", 500, 8.0, 4000.0),
+        ],
+    )
+
+    assert carry["cum_pnl"] == 500.0
