@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -105,6 +106,12 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="忽略金额低于此阈值（元）的调仓动作，过滤价格微变导致的噪音手数调整。建议设 500~1000。",
     )
+    parser.add_argument(
+        "--no-cache-roll-forward",
+        action="store_true",
+        help="不要用上一条已缓存且执行日为今天的目标持仓覆盖 --positions。"
+             "仅在昨日信号未执行或你已手动传入最新真实持仓时使用。",
+    )
     return parser.parse_args()
 
 
@@ -132,6 +139,9 @@ def _daily_cfg(config: dict, args: argparse.Namespace) -> Dict[str, Any]:
     cfg["cache_dir"] = cfg.get("cache_dir") or "signals/daily_rebalance_cache"
     cfg["reminder_rebuild_on_miss"] = bool(
         cfg.get("reminder_rebuild_on_miss", True) and not args.no_reminder_rebuild
+    )
+    cfg["cache_roll_forward_positions"] = bool(
+        cfg.get("cache_roll_forward_positions", True) and not args.no_cache_roll_forward
     )
     if not cfg["start_date"]:
         raise ValueError("daily_rebalance.start_date is required.")
@@ -529,6 +539,161 @@ def _parse_positions_arg(positions_str: str, trade_date: str) -> Dict[str, Dict[
     return result
 
 
+def _clone_position_snapshot(snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Return a JSON/cache-friendly position snapshot with normalized numbers."""
+    result: Dict[str, Dict[str, Any]] = {}
+    for inst, info in snapshot.items():
+        if not isinstance(info, dict):
+            continue
+        shares = float(info.get("shares", 0) or 0)
+        if shares <= 0:
+            continue
+        price = float(info.get("price", 0) or 0)
+        value = float(info.get("value", shares * price) or shares * price)
+        item: Dict[str, Any] = {"shares": shares, "price": price, "value": value}
+        for key in ("entry_date", "raw_target_value"):
+            if info.get(key) is not None:
+                item[key] = info[key]
+        result[inst] = item
+    return result
+
+
+def _refresh_position_prices(
+    positions: Dict[str, Dict[str, Any]],
+    trade_date: str,
+) -> Dict[str, Dict[str, Any]]:
+    """Update a snapshot to the latest actual close while keeping share counts."""
+    refreshed = _clone_position_snapshot(positions)
+    for inst, info in refreshed.items():
+        price = _load_actual_close(inst, trade_date)
+        if price is not None and price > 0:
+            info["price"] = price
+        info["value"] = float(info.get("shares", 0) or 0) * float(info.get("price", 0) or 0)
+    return refreshed
+
+
+def _annotate_executed_target(
+    target: Dict[str, Dict[str, Any]],
+    previous: Optional[Dict[str, Dict[str, Any]]],
+    execution_date: str,
+) -> Dict[str, Dict[str, Any]]:
+    """Attach entry dates to a target snapshot after the rebalance is executed."""
+    annotated = _clone_position_snapshot(target)
+    previous = previous or {}
+    for inst, info in annotated.items():
+        prev_info = previous.get(inst, {})
+        prev_shares = float(prev_info.get("shares", 0) or 0)
+        new_shares = float(info.get("shares", 0) or 0)
+        if prev_shares >= new_shares and prev_info.get("entry_date"):
+            info["entry_date"] = prev_info["entry_date"]
+        else:
+            info["entry_date"] = execution_date
+    return annotated
+
+
+def _parse_target_positions_from_report(report: str, execution_date: str) -> Dict[str, Dict[str, Any]]:
+    """Recover target positions from legacy caches that only stored report text."""
+    in_target_section = False
+    result: Dict[str, Dict[str, Any]] = {}
+    pattern = re.compile(
+        r"^(?P<inst>(?:SH|SZ|BJ)\d{6})\b.*?:\s*"
+        r"(?P<shares>[\d,]+(?:\.\d+)?)股"
+        r"(?:\s+约(?P<value>[\d,]+(?:\.\d+)?)元)?"
+    )
+    for raw_line in str(report or "").splitlines():
+        line = raw_line.strip()
+        if line == "目标持仓摘要:":
+            in_target_section = True
+            continue
+        if not in_target_section:
+            continue
+        if not line or line.startswith("模型选股目标"):
+            break
+        matched = pattern.match(line)
+        if not matched:
+            continue
+        inst = matched.group("inst")
+        shares = float(matched.group("shares").replace(",", ""))
+        value = float(matched.group("value").replace(",", "")) if matched.group("value") else 0.0
+        price = value / shares if shares > 0 and value > 0 else 0.0
+        result[inst] = {
+            "shares": shares,
+            "price": price,
+            "value": value,
+            "entry_date": execution_date,
+        }
+    return result
+
+
+def _cache_strategy_matches(payload: Dict[str, Any], cfg: Dict[str, Any]) -> bool:
+    strategy = payload.get("strategy") or {}
+    market = strategy.get("market")
+    return not market or market == cfg.get("market")
+
+
+def _load_executed_positions_from_cache(
+    cfg: Dict[str, Any],
+    trade_date: str,
+) -> Optional[Dict[str, Dict[str, Any]]]:
+    """Load the latest cached target whose execution date is *trade_date*.
+
+    This treats yesterday's signal as executed at today's open/close, so the
+    next after-close run diffs against the post-trade portfolio instead of a
+    stale hand-written --positions snapshot.
+    """
+    if not cfg.get("cache_roll_forward_positions", True):
+        return None
+
+    cache_dir = _cache_dir(cfg)
+    if not cache_dir.exists():
+        return None
+
+    candidates: List[Tuple[pd.Timestamp, str, Path, Dict[str, Any]]] = []
+    trade_ts = pd.Timestamp(trade_date).normalize()
+    for path in cache_dir.glob("rebalance_*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        next_trade_date = payload.get("next_trade_date")
+        if not next_trade_date:
+            continue
+        if pd.Timestamp(next_trade_date).normalize() != trade_ts:
+            continue
+        if not _cache_strategy_matches(payload, cfg):
+            continue
+        signal_date = pd.Timestamp(payload.get("trade_date") or "1900-01-01")
+        candidates.append((signal_date, str(payload.get("created_at", "")), path, payload))
+
+    if not candidates:
+        return None
+
+    _, _, path, payload = sorted(candidates, key=lambda item: (item[0], item[1]))[-1]
+    raw_positions = payload.get("executed_positions") or payload.get("target_positions")
+    if isinstance(raw_positions, dict) and raw_positions:
+        positions = _clone_position_snapshot(raw_positions)
+    else:
+        positions = _parse_target_positions_from_report(
+            str(payload.get("report", "")),
+            execution_date=str(payload.get("next_trade_date") or trade_date),
+        )
+    if not positions:
+        return None
+
+    execution_date = str(payload.get("next_trade_date") or trade_date)
+    for info in positions.values():
+        info.setdefault("entry_date", execution_date)
+    positions = _refresh_position_prices(positions, trade_date)
+    logger.info(
+        "使用上一条缓存信号作为已执行持仓: %s -> %s (%s, 共 %d 只)。",
+        payload.get("trade_date"),
+        payload.get("next_trade_date"),
+        path.name,
+        len(positions),
+    )
+    return positions
+
+
 def _sorted_position_items(positions: dict) -> List[Tuple[pd.Timestamp, Any]]:
     items = [(pd.to_datetime(date), value) for date, value in positions.items()]
     return sorted(items, key=lambda item: item[0])
@@ -559,6 +724,30 @@ def _diff_positions(
             )
         )
     return actions
+
+
+def _positions_after_actions(
+    previous: Dict[str, Dict[str, Any]],
+    target: Dict[str, Dict[str, Any]],
+    actions: Iterable[RebalanceAction],
+) -> Dict[str, Dict[str, Any]]:
+    """Return the portfolio implied by the actions the report asks to execute."""
+    action_instruments = {action.instrument for action in actions}
+    result = _clone_position_snapshot(previous)
+
+    for inst, info in target.items():
+        old_shares = float(previous.get(inst, {}).get("shares", 0) or 0)
+        new_shares = float(info.get("shares", 0) or 0)
+        if abs(new_shares - old_shares) < 1 or inst in action_instruments:
+            result[inst] = dict(info)
+        elif inst not in previous:
+            result.pop(inst, None)
+
+    for inst in set(previous) - set(target):
+        if inst in action_instruments:
+            result.pop(inst, None)
+
+    return _clone_position_snapshot(result)
 
 
 def _count_trading_days_held(
@@ -643,7 +832,8 @@ def _run_real_rebalance(
     next_trade_date: str,
     actual_positions: Optional[Dict[str, Dict[str, float]]] = None,
     trading_calendar: Optional[List[pd.Timestamp]] = None,
-) -> str:
+    return_details: bool = False,
+) -> Any:
     model = _load_model(config, cfg.get("model_path", ""))
     data_loader = DataLoader(config)
     universe_filter = UniverseFilter(config.get("strategy", {}))
@@ -735,6 +925,12 @@ def _run_real_rebalance(
                 ", ".join(f"{a.instrument} {a.shares:.0f}股 {a.value:.0f}元" for a in ignored),
             )
         actions = filtered
+    target_for_cache = _annotate_executed_target(target, previous, next_trade_date)
+    executed_for_cache = _annotate_executed_target(
+        _positions_after_actions(previous, target, actions),
+        previous,
+        next_trade_date,
+    )
     metrics = _last_metrics(report)
     name_map = load_stock_names()
     sector_map = _load_sector_map(config)
@@ -766,6 +962,22 @@ def _run_real_rebalance(
     overlay_warning = _check_overlay_monitor(config, drawdown)
     if overlay_warning:
         base_report = base_report.rstrip() + "\n\n" + overlay_warning
+    if return_details:
+        return base_report, {
+            "previous_positions": _clone_position_snapshot(previous),
+            "target_positions": target_for_cache,
+            "executed_positions": executed_for_cache,
+            "actions": [
+                {
+                    "action": action.action,
+                    "instrument": action.instrument,
+                    "shares": action.shares,
+                    "price": action.price,
+                    "value": action.value,
+                }
+                for action in actions
+            ],
+        }
     return base_report
 
 
@@ -856,6 +1068,7 @@ def _save_signal_cache(
     next_trade_date: str,
     report: str,
     mock: bool,
+    details: Optional[Dict[str, Any]] = None,
 ) -> Path:
     cache_path, latest_path = _cache_paths(cfg, trade_date)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -873,6 +1086,8 @@ def _save_signal_cache(
         },
         "report": report,
     }
+    if details:
+        payload.update(details)
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     cache_path.write_text(text + "\n", encoding="utf-8")
     latest_path.write_text(text + "\n", encoding="utf-8")
@@ -1308,8 +1523,22 @@ def main() -> None:
         actual_positions = _parse_positions_arg(args.positions, trade_date_str)
         logger.info("已解析 --positions 实际持仓: %s", list(actual_positions.keys()))
 
-    report = _run_real_rebalance(config, cfg, trade_date_str, next_trade_date, actual_positions, list(trading_calendar))
-    _save_signal_cache(cfg, trade_date_str, next_trade_date, report, mock=False)
+    cached_positions = _load_executed_positions_from_cache(cfg, trade_date_str)
+    if cached_positions is not None:
+        if actual_positions is not None:
+            logger.info("上一条已执行缓存覆盖 --positions；如昨日信号未执行，请加 --no-cache-roll-forward。")
+        actual_positions = cached_positions
+
+    report, details = _run_real_rebalance(
+        config,
+        cfg,
+        trade_date_str,
+        next_trade_date,
+        actual_positions,
+        list(trading_calendar),
+        return_details=True,
+    )
+    _save_signal_cache(cfg, trade_date_str, next_trade_date, report, mock=False, details=details)
     _send_report(config, report, trade_date_str, args.dry_run, cfg["notify_channel"])
 
 

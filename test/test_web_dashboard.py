@@ -7,6 +7,7 @@ from web.api.app import create_app
 from web.api.routers import backtest as backtest_router
 from web.api.routers import data as data_router
 from web.api.routers import signals as signals_router
+from web.api.services import agent_service
 from web.api.services import chart_service
 from web.api.services.data_service import _json_safe_quote_records
 
@@ -176,6 +177,96 @@ def test_grid_command_includes_advanced_web_params():
     assert cmd[cmd.index("--output-csv") + 1] == "backtest_results/demo.csv"
     assert cmd[cmd.index("--slippage-multipliers") + 1] == "0.0,1.0,2.0"
     assert cmd[cmd.index("--markets") + 1] == "csi300,csi1000"
+
+
+def test_agent_runs_list_and_detail_are_read_only(monkeypatch, tmp_path):
+    runs_dir = tmp_path / "agent_runs"
+    run_dir = runs_dir / "demo_run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "demo_run",
+                "objective": "inspect artifacts",
+                "generated_at": "2026-05-13T10:00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "plan.md").write_text("# plan\n", encoding="utf-8")
+    (run_dir / "commands.json").write_text(
+        json.dumps(
+            {
+                "run_id": "demo_run",
+                "commands": [{"command_id": "cmd_001"}],
+                "results": [],
+                "feedback_candidates": [{}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "commands.md").write_text("# commands\n", encoding="utf-8")
+    (run_dir / "execution_summary.md").write_text("# summary\n", encoding="utf-8")
+    monkeypatch.setattr(agent_service, "AGENT_RUNS_DIR", runs_dir)
+
+    client = TestClient(create_app())
+    list_response = client.get("/api/agents/runs")
+    detail_response = client.get("/api/agents/runs/demo_run")
+    traversal_response = client.get("/api/agents/runs/../secret")
+
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["run_id"] == "demo_run"
+    assert list_response.json()[0]["commands_count"] == 1
+    assert list_response.json()[0]["feedback_candidates_count"] == 1
+    assert detail_response.status_code == 200
+    assert detail_response.json()["artifacts"]["plan.md"] == "# plan\n"
+    assert detail_response.json()["artifacts"]["commands.json"]["run_id"] == "demo_run"
+    assert traversal_response.status_code in {400, 404}
+
+
+def test_agent_create_run_writes_plan_and_command_artifacts(monkeypatch, tmp_path):
+    runs_dir = tmp_path / "agent_runs"
+    monkeypatch.setattr(agent_service, "AGENT_RUNS_DIR", runs_dir)
+    monkeypatch.setattr(agent_service, "PROJECT_ROOT", tmp_path)
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/agents/runs",
+        json={"objective": "phase5 dashboard smoke", "run_id": "phase5_api_smoke"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"] == "phase5_api_smoke"
+    assert payload["has_plan"] is True
+    assert payload["has_commands"] is True
+    assert payload["has_approval_template"] is True
+    assert (runs_dir / "phase5_api_smoke" / "run.json").exists()
+    assert (runs_dir / "phase5_api_smoke" / "commands.json").exists()
+
+
+def test_agent_approval_template_regenerates_from_saved_plan(monkeypatch, tmp_path):
+    runs_dir = tmp_path / "agent_runs"
+    monkeypatch.setattr(agent_service, "AGENT_RUNS_DIR", runs_dir)
+    monkeypatch.setattr(agent_service, "PROJECT_ROOT", tmp_path)
+
+    client = TestClient(create_app())
+    create_response = client.post(
+        "/api/agents/runs",
+        json={
+            "objective": "approval regeneration",
+            "run_id": "approval_regen",
+            "propose_actions": False,
+            "write_approval_template": False,
+        },
+    )
+    assert create_response.status_code == 200
+
+    response = client.post("/api/agents/runs/approval_regen/approval-template")
+
+    assert response.status_code == 200
+    assert response.json()["has_approval_template"] is True
+    assert (runs_dir / "approval_regen" / "approval_template.yaml").exists()
 
 
 def test_wfv_command_includes_advanced_web_params():

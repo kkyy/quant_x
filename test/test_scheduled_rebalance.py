@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
 from quant_ex.run_scheduled_rebalance import (
@@ -7,9 +9,12 @@ from quant_ex.run_scheduled_rebalance import (
     _convert_snapshot_to_actual_prices,
     _diff_positions,
     _format_report,
+    _load_executed_positions_from_cache,
     _next_trading_day,
+    _positions_after_actions,
     _previous_trading_day,
     _resolve_cfg_start_date,
+    RebalanceAction,
 )
 
 
@@ -179,3 +184,93 @@ def test_format_report_shows_model_target_when_only_shares_change():
 
     assert "模型选股目标" in report
     assert "200股" in report
+
+
+def test_load_executed_positions_from_legacy_cache_report(tmp_path, monkeypatch):
+    payload = {
+        "trade_date": "2026-05-12",
+        "next_trade_date": "2026-05-13",
+        "created_at": "2026-05-12T20:00:00",
+        "strategy": {"market": "csi300"},
+        "report": "\n".join(
+            [
+                "量化调仓信号",
+                "目标持仓摘要:",
+                "SH600115 中国东航 [航空运输]: 6700股 约29,748元",
+                "SZ000651 格力电器 [空调]: 700股 约28,238元",
+            ]
+        ),
+    }
+    (tmp_path / "rebalance_2026-05-12.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "quant_ex.run_scheduled_rebalance._load_actual_close",
+        lambda instrument, trade_date: 5.0 if instrument == "SH600115" else 40.0,
+    )
+
+    positions = _load_executed_positions_from_cache(
+        {"cache_dir": str(tmp_path), "market": "csi300"},
+        "2026-05-13",
+    )
+
+    assert positions is not None
+    assert positions["SH600115"]["shares"] == 6700.0
+    assert positions["SH600115"]["price"] == 5.0
+    assert positions["SH600115"]["value"] == 33500.0
+    assert positions["SH600115"]["entry_date"] == "2026-05-13"
+    assert positions["SZ000651"]["entry_date"] == "2026-05-13"
+
+
+def test_load_executed_positions_prefers_structured_executed_positions(tmp_path, monkeypatch):
+    payload = {
+        "trade_date": "2026-05-12",
+        "next_trade_date": "2026-05-13",
+        "created_at": "2026-05-12T20:00:00",
+        "strategy": {"market": "csi300"},
+        "target_positions": {
+            "SH600001": {"shares": 100, "price": 10.0, "value": 1000.0, "entry_date": "2026-05-13"},
+        },
+        "executed_positions": {
+            "SH600002": {"shares": 200, "price": 8.0, "value": 1600.0, "entry_date": "2026-04-30"},
+        },
+    }
+    (tmp_path / "rebalance_2026-05-12.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("quant_ex.run_scheduled_rebalance._load_actual_close", lambda instrument, trade_date: 9.0)
+
+    positions = _load_executed_positions_from_cache(
+        {"cache_dir": str(tmp_path), "market": "csi300"},
+        "2026-05-13",
+    )
+
+    assert positions == {
+        "SH600002": {
+            "shares": 200.0,
+            "price": 9.0,
+            "value": 1800.0,
+            "entry_date": "2026-04-30",
+        }
+    }
+
+
+def test_positions_after_actions_keeps_filtered_small_diffs_as_previous():
+    previous = {
+        "SH600001": {"shares": 100, "price": 10.0, "value": 1000.0, "entry_date": "2026-04-30"},
+        "SH600002": {"shares": 200, "price": 8.0, "value": 1600.0, "entry_date": "2026-04-30"},
+    }
+    target = {
+        "SH600001": {"shares": 200, "price": 11.0, "value": 2200.0},
+        "SH600003": {"shares": 100, "price": 20.0, "value": 2000.0},
+    }
+    actions = [RebalanceAction("buy", "SH600003", 100, 20.0, 2000.0)]
+
+    positions = _positions_after_actions(previous, target, actions)
+
+    assert positions["SH600001"]["shares"] == 100.0
+    assert positions["SH600001"]["entry_date"] == "2026-04-30"
+    assert positions["SH600003"]["shares"] == 100.0
+    assert "SH600002" in positions

@@ -49,6 +49,10 @@ Thumbs.db
 # Never commit notify credentials / API keys
 config/notify.yaml
 # Use notify.yaml.example as template instead
+config/agent_strategy_iteration.yaml
+# Use agent_strategy_iteration.example.yaml as template instead
+docs/strategy_log/agent_runs/
+# Agent run bundles are local/generated; force-add a curated sample only when needed
 
 # If user has a local override config
 config/local*.yaml

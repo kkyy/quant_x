@@ -10,6 +10,7 @@ const ResearchPage = lazy(() => import("./pages/ResearchPage").then((m) => ({ de
 const ModelsPage = lazy(() => import("./pages/ModelsPage").then((m) => ({ default: m.ModelsPage })));
 const BacktestPage = lazy(() => import("./pages/BacktestPage").then((m) => ({ default: m.BacktestPage })));
 const SignalsPage = lazy(() => import("./pages/SignalsPage").then((m) => ({ default: m.SignalsPage })));
+const AgentRunsPage = lazy(() => import("./pages/AgentRunsPage").then((m) => ({ default: m.AgentRunsPage })));
 const ConfigPage = lazy(() => import("./pages/ConfigPage").then((m) => ({ default: m.ConfigPage })));
 const SystemPage = lazy(() => import("./pages/SystemPage").then((m) => ({ default: m.SystemPage })));
 
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/models" element={<PageBoundary><ModelsPage /></PageBoundary>} />
           <Route path="/backtest" element={<PageBoundary><BacktestPage /></PageBoundary>} />
           <Route path="/signals" element={<PageBoundary><SignalsPage /></PageBoundary>} />
+          <Route path="/agents" element={<PageBoundary><AgentRunsPage /></PageBoundary>} />
           <Route path="/config" element={<PageBoundary><ConfigPage /></PageBoundary>} />
           <Route path="/system" element={<PageBoundary><SystemPage /></PageBoundary>} />
         </Route>
